@@ -1,0 +1,127 @@
+.tree-node-root {
+  padding: 0;
+}
+
+.tree-node {
+  /* Минимальное вертикальное расстояние между строками дерева */
+  margin: 0;
+}
+
+.tree-node-header {
+  display: flex;
+  align-items: center;
+  /* Сделаем отступы компактными, но оставим область клика комфортной */
+  padding: 0.1rem 0.4rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tree-node-header:hover {
+  background: #f5f5f5;
+}
+
+.tree-node-position {
+  padding: 0.1rem 0.4rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+
+.tree-node-position:hover {
+  background: #e3f2fd;
+}
+
+.tree-node-position-selected {
+  background: #bbdefb !important;
+  font-weight: 500;
+}
+
+.tree-node-position-selected:hover {
+  background: #90caf9 !important;
+}
+
+.tree-node-clickable {
+  cursor: pointer;
+}
+
+.tree-node-children-indicator,
+.tree-node-children-count {
+  margin-left: 0.5rem;
+  font-size: 0.8rem;
+  color: #999;
+  font-weight: normal;
+}
+
+.tree-node-icon {
+  margin-right: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.tree-node-label {
+  font-size: 0.9rem;
+}
+
+.tree-node-toggle {
+  margin-left: 0.25rem;
+  font-size: 0.7rem;
+  color: #666;
+}
+
+.tree-node-actions {
+  padding: 0.25rem 0.5rem;
+  padding-left: 2rem;
+}
+
+.btn-small {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8rem;
+}
+
+.tree-node-children {
+  margin-left: 1.5rem;
+  border-left: 1px solid #e0e0e0;
+  padding-left: 0.5rem;
+}
+
+.tree-node-quick-create {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 0.25rem 0;
+}
+
+.tree-node-quick-create-button {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(4px);
+  transition: opacity 0.15s ease-out, transform 0.15s ease-out, visibility 0.15s ease-out;
+}
+
+.tree-node-quick-create-button--visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(0);
+}
+
+.tree-node-quick-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.15rem 0.35rem;
+  font-size: 0.8rem;
+  border: none;
+  outline: none;
+  background: transparent;
+}
+
+.tree-node-level-0 {
+  font-weight: 500;
+}
+
+.tree-node-level-1 {
+  font-weight: 400;
+}
+
+.tree-node-level-2 {
+  font-weight: 300;
+}
+

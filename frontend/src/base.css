@@ -1,0 +1,228 @@
+/* Base styles: reset, typography, layout */
+
+@import './design-tokens.css';
+
+/* Modern CSS reset with sensible defaults */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  min-height: 100vh;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--line-height-normal);
+  color: var(--color-text-main);
+  background:
+    radial-gradient(circle at 0% 0%, rgba(58, 134, 255, 0.16), transparent 60%),
+    radial-gradient(circle at 100% 0%, rgba(131, 56, 236, 0.14), transparent 60%),
+    radial-gradient(circle at 0% 100%, rgba(255, 158, 0, 0.12), transparent 55%),
+    var(--color-bg-body);
+  overflow-x: hidden;
+}
+
+#root {
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+}
+
+img,
+picture,
+video,
+canvas,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+input,
+button,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+/* Layout helpers */
+.app-root {
+  height: 100vh;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(58, 134, 255, 0.14), transparent 55%),
+    radial-gradient(circle at 100% 0%, rgba(131, 56, 236, 0.12), transparent 55%),
+    radial-gradient(circle at 100% 100%, rgba(255, 158, 0, 0.14), transparent 55%),
+    var(--color-bg-body);
+  overflow: hidden;
+}
+
+.app-shell {
+  width: calc(100% - 20px);
+  max-width: calc(100% - 20px);
+  height: calc(100vh - 20px);
+  max-height: calc(100vh - 20px);
+  margin: 10px;
+  padding: var(--space-4);
+  border-radius: var(--radius-xl);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.98));
+  box-shadow:
+    0 0 0 1px rgba(148, 163, 184, 0.16),
+    var(--shadow-lg),
+    0 -10px 25px rgba(15, 23, 42, 0.20) inset;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  overflow: hidden;
+  min-height: 0;
+}
+
+@media (min-width: 768px) {
+  .app-shell {
+    width: calc(100% - 20px);
+    max-width: calc(100% - 20px);
+    height: calc(100vh - 20px);
+    max-height: calc(100vh - 20px);
+    margin: 10px;
+    padding: var(--space-6);
+  }
+}
+
+/* Hero-style header */
+.app-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3);
+  border-radius: calc(var(--radius-lg) + 4px);
+  background:
+    linear-gradient(135deg, rgba(58, 134, 255, 0.10), rgba(131, 56, 236, 0.04)),
+    radial-gradient(circle at 0% 0%, rgba(255, 255, 255, 0.9), transparent 60%);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  box-shadow:
+    0 18px 45px rgba(15, 23, 42, 0.12),
+    0 0 0 1px rgba(255, 255, 255, 0.90) inset;
+}
+
+.app-header-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.app-title {
+  font-size: clamp(var(--text-2xl), 2.4vw, var(--text-3xl));
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.02em;
+  color: var(--color-text-strong);
+}
+
+.app-subtitle {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  max-width: 38rem;
+}
+
+.app-header-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.8rem;
+  font-size: var(--text-xs);
+  color: rgba(15, 23, 42, 0.7);
+}
+
+.badge-soft {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.5);
+}
+
+.app-header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+@media (max-width: 767px) {
+  .app-header {
+    padding: var(--space-3);
+  }
+
+  .app-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+    margin-top: var(--space-2);
+  }
+}
+
+/* Two-panel layout */
+.app-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 480px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (min-width: 768px) {
+  .app-body {
+    flex-direction: row;
+    gap: 0;
+  }
+}
+
+/* Scrollbar styling (for modern look) */
+.scroll-area {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.7) transparent;
+}
+
+.scroll-area::-webkit-scrollbar {
+  width: 8px;
+}
+
+.scroll-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scroll-area::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    rgba(148, 163, 184, 0.75),
+    rgba(71, 85, 105, 0.95)
+  );
+  border-radius: 999px;
+}
+
+

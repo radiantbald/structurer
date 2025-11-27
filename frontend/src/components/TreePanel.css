@@ -1,0 +1,69 @@
+.tree-panel {
+  /* Панель дерева заполняет доступную ширину и гибко растягивается/сжимается */
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  height: 100%;
+}
+
+.tree-panel-header {
+  padding: 1rem;
+  border-bottom: 1px solid #ddd;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.tree-panel-actions {
+  display: flex;
+  flex-direction: row;
+  gap: 0.5rem;
+}
+
+.tree-panel-actions .btn {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+  padding: 0.5rem 0.5rem;
+  line-height: 1.3;
+  text-align: center;
+  word-wrap: break-word;
+  white-space: normal;
+  min-height: 2.5rem;
+  color: #000000;
+  background: #e9d5ff;
+  border-color: #c084fc;
+}
+
+.tree-panel-actions .btn:hover {
+  background: #ddd6fe;
+}
+
+.btn {
+  padding: 0.5rem 1rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.btn:hover {
+  background: #f5f5f5;
+}
+
+.btn-primary {
+  background: #007bff;
+  color: white;
+  border-color: #007bff;
+}
+
+.btn-primary:hover {
+  background: #0056b3;
+}
+

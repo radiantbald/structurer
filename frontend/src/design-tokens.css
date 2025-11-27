@@ -1,0 +1,98 @@
+/* Design Tokens: colors, typography, spacing, radii, shadows, breakpoints */
+
+:root {
+  /* Color palette (light theme) */
+  --color-primary: #3a86ff;
+  --color-primary-soft: rgba(58, 134, 255, 0.08);
+  --color-secondary: #8338ec;
+  --color-secondary-soft: rgba(131, 56, 236, 0.08);
+  --color-success: #38b000;
+  --color-warning: #ff9e00;
+  --color-error: #ff006e;
+
+  --gray-50: #fafafa;
+  --gray-100: #f4f4f5;
+  --gray-200: #e4e4e7;
+  --gray-300: #d4d4d8;
+  --gray-400: #a1a1aa;
+  --gray-500: #71717a;
+  --gray-700: #3f3f46;
+  --gray-800: #27272a;
+  --gray-900: #18181b;
+
+  --color-bg-body: #f3f4fb;
+  --color-bg-elevated: #ffffff;
+  --color-border-subtle: rgba(15, 23, 42, 0.06);
+  --color-border-strong: rgba(15, 23, 42, 0.12);
+
+  --color-text-main: #111827;
+  --color-text-muted: #6b7280;
+  --color-text-strong: #020617;
+  --color-text-on-primary: #ffffff;
+
+  /* Typography */
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "Inter", "Segoe UI", sans-serif;
+
+  --text-xs: 0.75rem;   /* 12px */
+  --text-sm: 0.875rem;  /* 14px */
+  --text-base: 1rem;    /* 16px */
+  --text-lg: 1.125rem;  /* 18px */
+  --text-xl: 1.25rem;   /* 20px */
+  --text-2xl: 1.5rem;   /* 24px */
+  --text-3xl: 1.875rem; /* 30px */
+  --text-4xl: 2.25rem;  /* 36px */
+
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --line-height-tight: 1.2;
+  --line-height-normal: 1.5;
+
+  /* Spacing scale – base unit 4px */
+  --space-1: 0.25rem;  /* 4px */
+  --space-2: 0.5rem;   /* 8px */
+  --space-3: 0.75rem;  /* 12px */
+  --space-4: 1rem;     /* 16px */
+  --space-5: 1.25rem;  /* 20px */
+  --space-6: 1.5rem;   /* 24px */
+  --space-8: 2rem;     /* 32px */
+  --space-10: 2.5rem;  /* 40px */
+  --space-12: 3rem;    /* 48px */
+  --space-16: 4rem;    /* 64px */
+
+  /* Radii */
+  --radius-sm: 0.25rem;  /* 4px */
+  --radius-base: 0.5rem; /* 8px */
+  --radius-md: 0.75rem;  /* 12px */
+  --radius-lg: 1rem;     /* 16px */
+  --radius-xl: 1.5rem;   /* 24px */
+  --radius-full: 50%;
+
+  /* Shadows (softer for light UI) */
+  --shadow-sm: 0 1px 2px 0 rgb(15 23 42 / 0.05);
+  --shadow-base: 0 1px 3px 0 rgb(15 23 42 / 0.08),
+    0 1px 2px -1px rgb(15 23 42 / 0.08);
+  --shadow-md: 0 10px 25px -12px rgb(15 23 42 / 0.18),
+    0 4px 6px -4px rgb(15 23 42 / 0.12);
+  --shadow-lg: 0 25px 60px -24px rgb(15 23 42 / 0.22);
+
+  /* Transitions */
+  --transition-fast: 150ms ease-out;
+  --transition-base: 200ms ease-out;
+  --transition-slow: 300ms ease-out;
+
+  /* Layout */
+  --container-max-width: 1200px;
+  --container-padding-x: var(--space-4);
+
+  /* Breakpoints (for reference, used in media queries) */
+  --bp-sm: 640px;
+  --bp-md: 768px;
+  --bp-lg: 1024px;
+  --bp-xl: 1280px;
+}
+
+

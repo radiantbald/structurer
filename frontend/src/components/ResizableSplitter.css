@@ -1,0 +1,86 @@
+.resizable-container {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.resizable-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  height: 100%;
+}
+
+.resizable-panel-left {
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.resizable-panel-right {
+  flex: 1;
+  min-width: 0;
+}
+
+.resizable-splitter {
+  width: 8px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background-color: transparent;
+  position: relative;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s;
+}
+
+.resizable-splitter:hover {
+  background-color: rgba(148, 163, 184, 0.2);
+}
+
+.resizable-splitter-handle {
+  width: 4px;
+  height: 40px;
+  background-color: #cbd5e1;
+  border-radius: 2px;
+  transition: background-color 0.2s, width 0.2s;
+}
+
+.resizable-splitter:hover .resizable-splitter-handle {
+  background-color: #64748b;
+  width: 6px;
+}
+
+.resizable-splitter:active,
+.resizable-splitter.resizing {
+  background-color: rgba(59, 130, 246, 0.2);
+}
+
+.resizable-splitter:active .resizable-splitter-handle,
+.resizable-splitter.resizing .resizable-splitter-handle {
+  background-color: #3b82f6;
+  width: 6px;
+}
+
+/* На мобильных устройствах скрываем разделитель */
+@media (max-width: 767px) {
+  .resizable-splitter {
+    display: none;
+  }
+  
+  .resizable-panel-left {
+    width: 100% !important;
+  }
+  
+  .resizable-panel-right {
+    width: 100% !important;
+  }
+  
+  .resizable-container {
+    flex-direction: column;
+  }
+}
+
