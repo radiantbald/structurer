@@ -8,8 +8,17 @@ import CustomFieldForm from './CustomFieldForm';
 import PositionsListModal from './PositionsListModal';
 import '../base.css';
 
+const STORAGE_KEYS = {
+  SELECTED_POSITION_ID: 'selectedPositionId',
+  SELECTED_NODE_PATH: 'selectedNodePath',
+};
+
 function AppLayout() {
-  const [selectedPositionId, setSelectedPositionId] = useState(null);
+  // Восстанавливаем состояние из localStorage при инициализации
+  const [selectedPositionId, setSelectedPositionId] = useState(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.SELECTED_POSITION_ID);
+    return saved ? parseInt(saved, 10) : null;
+  });
   const [selectedNode, setSelectedNode] = useState(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [treeRefreshTrigger, setTreeRefreshTrigger] = useState(0);
@@ -19,6 +28,10 @@ function AppLayout() {
   const [showCustomFields, setShowCustomFields] = useState(false);
   const [showPositionsList, setShowPositionsList] = useState(false);
   const [treeStructure, setTreeStructure] = useState(null);
+  const [savedNodePath, setSavedNodePath] = useState(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.SELECTED_NODE_PATH);
+    return saved ? JSON.parse(saved) : null;
+  });
 
   const handlePositionSelect = (positionId, path, name) => {
     setSelectedPositionId(positionId);
@@ -26,6 +39,13 @@ function AppLayout() {
     setInitialName(name || null);
     // Очищаем выбранный узел при выборе позиции
     setSelectedNode(null);
+    // Сохраняем выбранную позицию в localStorage
+    if (positionId) {
+      localStorage.setItem(STORAGE_KEYS.SELECTED_POSITION_ID, positionId.toString());
+      localStorage.removeItem(STORAGE_KEYS.SELECTED_NODE_PATH);
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.SELECTED_POSITION_ID);
+    }
   };
 
   const handlePositionSaved = (savedPositionId) => {
@@ -35,6 +55,9 @@ function AppLayout() {
       setSelectedNode(null);
       setInitialPath(null);
       setInitialName(null);
+      // Сохраняем выбранную позицию в localStorage
+      localStorage.setItem(STORAGE_KEYS.SELECTED_POSITION_ID, savedPositionId.toString());
+      localStorage.removeItem(STORAGE_KEYS.SELECTED_NODE_PATH);
     }
     setRefreshTrigger(prev => prev + 1);
     setTreeRefreshTrigger(prev => prev + 1);
@@ -111,6 +134,7 @@ function AppLayout() {
     setSelectedPositionId(null);
     setInitialPath(null);
     setInitialName(null);
+    localStorage.removeItem(STORAGE_KEYS.SELECTED_POSITION_ID);
     
     // Находим ближайший родительский узел типа field_value
     let parentNode = null;
@@ -124,6 +148,15 @@ function AppLayout() {
     }
     
     setSelectedNode(parentNode);
+    // Сохраняем путь выбранного узла
+    if (parentNode && treeStructure) {
+      const nodePath = buildNodePath(parentNode, treeStructure);
+      if (nodePath) {
+        localStorage.setItem(STORAGE_KEYS.SELECTED_NODE_PATH, JSON.stringify(nodePath));
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.SELECTED_NODE_PATH);
+      }
+    }
     setRefreshTrigger(prev => prev + 1);
     setTreeRefreshTrigger(prev => prev + 1);
   };
@@ -137,6 +170,9 @@ function AppLayout() {
       setSelectedNode(null);
       setInitialPath(null);
       setInitialName(null);
+      // Сохраняем выбранную позицию в localStorage
+      localStorage.setItem(STORAGE_KEYS.SELECTED_POSITION_ID, createdPositionId.toString());
+      localStorage.removeItem(STORAGE_KEYS.SELECTED_NODE_PATH);
     }
   };
 
@@ -146,10 +182,138 @@ function AppLayout() {
     setSelectedPositionId(null);
     setInitialPath(null);
     setInitialName(null);
+    // Сохраняем путь выбранного узла в localStorage
+    if (node && treeStructure) {
+      const nodePath = buildNodePath(node, treeStructure);
+      if (nodePath) {
+        localStorage.setItem(STORAGE_KEYS.SELECTED_NODE_PATH, JSON.stringify(nodePath));
+        localStorage.removeItem(STORAGE_KEYS.SELECTED_POSITION_ID);
+      }
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.SELECTED_NODE_PATH);
+    }
   };
 
   const handleTreeStructureChange = (structure) => {
     setTreeStructure(structure);
+    
+    // Восстанавливаем выбранный узел после загрузки структуры дерева
+    if (structure && savedNodePath && !selectedPositionId) {
+      const node = findNodeByPath(structure.root, savedNodePath);
+      if (node) {
+        setSelectedNode(node);
+        setSavedNodePath(null); // Очищаем сохраненный путь после восстановления
+      }
+    }
+  };
+
+  // Функция для построения пути узла
+  const buildNodePath = (node, structure) => {
+    if (!node || node.type === 'root' || !structure || !structure.root) {
+      return null;
+    }
+    
+    // Для узлов field_value собираем путь из field_key и field_value
+    if (node.type === 'field_value' && node.field_key && node.field_value) {
+      // Находим путь, обходя дерево от корня до этого узла
+      const findPath = (currentNode, targetNode, currentPath = {}) => {
+        if (currentNode === targetNode) {
+          return currentPath;
+        }
+        
+        if (currentNode.children) {
+          for (const child of currentNode.children) {
+            if (child.type === 'field_value' && child.field_key && child.field_value) {
+              const newPath = { ...currentPath, [child.field_key]: child.field_value };
+              const result = findPath(child, targetNode, newPath);
+              if (result) {
+                return result;
+              }
+            } else {
+              const result = findPath(child, targetNode, currentPath);
+              if (result) {
+                return result;
+              }
+            }
+          }
+        }
+        return null;
+      };
+      
+      return findPath(structure.root, node);
+    }
+    
+    return null;
+  };
+
+  // Функция для поиска узла по пути
+  const findNodeByPath = (root, path) => {
+    if (!root || !path || Object.keys(path).length === 0) {
+      return root && root.type === 'root' ? root : null;
+    }
+    
+    const traverse = (node, remainingPath, currentPath = {}) => {
+      if (!node) {
+        return null;
+      }
+      
+      // Проверяем, совпадает ли текущий путь с искомым
+      const pathMatches = (path1, path2) => {
+        if (Object.keys(path1).length !== Object.keys(path2).length) {
+          return false;
+        }
+        for (const key in path1) {
+          if (path1[key] !== path2[key]) {
+            return false;
+          }
+        }
+        return true;
+      };
+      
+      if (node.type === 'field_value' && node.field_key && node.field_value) {
+        const newPath = { ...currentPath, [node.field_key]: node.field_value };
+        
+        if (pathMatches(newPath, path)) {
+          return node;
+        }
+        
+        // Проверяем, является ли newPath префиксом искомого пути
+        const isPrefix = (prefix, full) => {
+          for (const key in prefix) {
+            if (full[key] !== prefix[key]) {
+              return false;
+            }
+          }
+          return true;
+        };
+        
+        if (isPrefix(newPath, path)) {
+          // Продолжаем поиск в детях
+          if (node.children) {
+            for (const child of node.children) {
+              const result = traverse(child, path, newPath);
+              if (result) {
+                return result;
+              }
+            }
+          }
+        }
+      } else {
+        // Для других типов узлов продолжаем поиск в детях
+        if (node.children) {
+          for (const child of node.children) {
+            const result = traverse(child, path, currentPath);
+            if (result) {
+              return result;
+            }
+          }
+        }
+      }
+      
+      return null;
+    };
+    
+    return traverse(root, path);
   };
 
   const handleTreeDefinitionChanged = () => {

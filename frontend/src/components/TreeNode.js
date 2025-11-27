@@ -207,11 +207,16 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
     
     // Подсчитываем все позиции во всех дочерних уровнях
     const totalPositions = countAllPositions(node);
+    
+    // Проверяем, является ли текущий узел выбранным
+    const isSelected = selectedNode && 
+                      selectedNode.field_key === node.field_key && 
+                      selectedNode.field_value === node.field_value;
 
     return (
       <div className={`tree-node tree-node-field tree-node-level-${level}`}>
         <div 
-          className="tree-node-header" 
+          className={`tree-node-header${isSelected ? ' tree-node-field-selected' : ''}`}
           onClick={hasChildren ? handleNodeClick : handleToggle}
         >
           <span className="tree-node-icon">

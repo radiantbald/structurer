@@ -8,7 +8,7 @@ function TreeSelector({ trees, selectedTreeId, onChange }) {
       value={selectedTreeId || ''}
       onChange={(e) => onChange(e.target.value)}
     >
-      <option value="">Должность</option>
+      <option value="">Без структуры</option>
       {trees.map(tree => (
         <option key={tree.id} value={tree.id}>
           {tree.name}

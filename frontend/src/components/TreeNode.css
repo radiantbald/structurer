@@ -40,6 +40,15 @@
   background: #90caf9 !important;
 }
 
+.tree-node-field-selected {
+  background: #bbdefb !important;
+  font-weight: 500;
+}
+
+.tree-node-field-selected:hover {
+  background: #90caf9 !important;
+}
+
 .tree-node-clickable {
   cursor: pointer;
 }
