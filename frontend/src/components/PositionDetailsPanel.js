@@ -105,10 +105,11 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
     }
     try {
       await axios.delete(`${API_BASE}/positions/${position.id}`);
+      const positionPath = position.custom_fields || {};
       setPosition(null);
       setIsEditing(false);
       if (onDeleted) {
-        onDeleted();
+        onDeleted(positionPath);
       }
     } catch (error) {
       console.error('Failed to delete position:', error);

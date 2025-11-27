@@ -31,13 +31,99 @@ function AppLayout() {
   const handlePositionSaved = (savedPositionId) => {
     if (savedPositionId) {
       setSelectedPositionId(savedPositionId);
+      // Очищаем выбранный узел, чтобы открылась карточка должности
+      setSelectedNode(null);
+      setInitialPath(null);
+      setInitialName(null);
     }
     setRefreshTrigger(prev => prev + 1);
     setTreeRefreshTrigger(prev => prev + 1);
   };
 
-  const handlePositionDeleted = () => {
+  // Функция для поиска родительского узла по path
+  // Ищет узел field_value с максимальным префиксом targetPath, или корневой узел
+  const findParentNode = (node, targetPath, currentPath = {}) => {
+    if (!node) {
+      return null;
+    }
+
+    // Если path пустой, возвращаем корневой узел
+    if (!targetPath || Object.keys(targetPath).length === 0) {
+      return node.type === 'root' ? node : null;
+    }
+
+    // Проверяем, является ли текущий path префиксом targetPath
+    const isPathPrefix = (prefix, fullPath) => {
+      for (const key in prefix) {
+        if (fullPath[key] !== prefix[key]) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    let bestMatch = null;
+    let bestPathLength = -1;
+
+    // Рекурсивная функция для обхода дерева
+    const traverse = (currentNode, path) => {
+      if (!currentNode) {
+        return;
+      }
+
+      // Если это узел field_value, проверяем его path
+      if (currentNode.type === 'field_value' && currentNode.field_key && currentNode.field_value) {
+        const newPath = { ...path, [currentNode.field_key]: currentNode.field_value };
+        
+        // Проверяем, является ли этот path префиксом targetPath
+        if (isPathPrefix(newPath, targetPath)) {
+          const pathLength = Object.keys(newPath).length;
+          // Если этот path длиннее текущего лучшего совпадения, обновляем
+          if (pathLength > bestPathLength) {
+            bestMatch = currentNode;
+            bestPathLength = pathLength;
+          }
+        }
+
+        // Продолжаем поиск в детях
+        for (const child of currentNode.children || []) {
+          traverse(child, newPath);
+        }
+      } else {
+        // Для других типов узлов продолжаем поиск в детях
+        for (const child of currentNode.children || []) {
+          traverse(child, path);
+        }
+      }
+    };
+
+    traverse(node, currentPath);
+
+    // Если нашли узел field_value, возвращаем его, иначе возвращаем корневой
+    if (bestMatch) {
+      return bestMatch;
+    }
+    
+    return node.type === 'root' ? node : null;
+  };
+
+  const handlePositionDeleted = (positionPath) => {
     setSelectedPositionId(null);
+    setInitialPath(null);
+    setInitialName(null);
+    
+    // Находим ближайший родительский узел типа field_value
+    let parentNode = null;
+    if (treeStructure && treeStructure.root && positionPath) {
+      parentNode = findParentNode(treeStructure.root, positionPath);
+    }
+    
+    // Если не нашли родительский узел, используем корневой
+    if (!parentNode && treeStructure && treeStructure.root) {
+      parentNode = treeStructure.root;
+    }
+    
+    setSelectedNode(parentNode);
     setRefreshTrigger(prev => prev + 1);
     setTreeRefreshTrigger(prev => prev + 1);
   };
@@ -47,6 +133,10 @@ function AppLayout() {
     setTreeRefreshTrigger(prev => prev + 1);
     if (createdPositionId) {
       setSelectedPositionId(createdPositionId);
+      // Очищаем выбранный узел, чтобы открылась карточка должности
+      setSelectedNode(null);
+      setInitialPath(null);
+      setInitialName(null);
     }
   };
 

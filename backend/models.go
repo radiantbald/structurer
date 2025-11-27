@@ -90,13 +90,14 @@ type TreeStructure struct {
 
 // TreeNode represents a node in the tree
 type TreeNode struct {
-	Type         string     `json:"type"` // "root", "field_value", "position"
-	LevelOrder   *int       `json:"level_order,omitempty"`
-	FieldKey     *string    `json:"field_key,omitempty"`
-	FieldValue   *string    `json:"field_value,omitempty"`
-	PositionID   *string    `json:"position_id,omitempty"`
-	PositionName *string    `json:"position_name,omitempty"`
-	Children     []TreeNode `json:"children"`
+	Type            string     `json:"type"` // "root", "field_value", "position"
+	LevelOrder      *int       `json:"level_order,omitempty"`
+	FieldKey        *string    `json:"field_key,omitempty"`
+	FieldValue      *string    `json:"field_value,omitempty"`
+	PositionID      *string    `json:"position_id,omitempty"`
+	PositionName    *string    `json:"position_name,omitempty"`
+	EmployeeFullName *string   `json:"employee_full_name,omitempty"`
+	Children        []TreeNode `json:"children"`
 }
 
 // JSONB is a helper type for JSONB columns

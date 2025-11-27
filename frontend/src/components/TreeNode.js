@@ -158,6 +158,12 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
     const totalPositions = countAllPositions(node);
     const hasPositionChildren = totalPositions > 1; // Больше 1, так как сама позиция тоже считается
     const isSelected = selectedPositionId && node.position_id === String(selectedPositionId);
+    
+    // Проверяем наличие ФИО
+    const hasEmployeeName = node.employee_full_name && 
+                            typeof node.employee_full_name === 'string' && 
+                            node.employee_full_name.trim() !== '';
+    
     return (
       <div
         className={`tree-node tree-node-position tree-node-level-${level}${hasPositionChildren ? ' tree-node-clickable' : ''}${isSelected ? ' tree-node-position-selected' : ''}`.trim()}
@@ -168,6 +174,11 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
             <span className="position-id">#{node.position_id}</span>
           )}
           {node.position_name}
+          {hasEmployeeName ? (
+            <> — {node.employee_full_name}</>
+          ) : (
+            <span className="position-vacant"> Вакант</span>
+          )}
         </span>
         {hasPositionChildren && (
           <span className="tree-node-children-indicator">

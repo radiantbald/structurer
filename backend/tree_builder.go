@@ -21,20 +21,26 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 	// If no levels, return plain list of positions
 	if len(tree.Levels) == 0 {
 		rows, _ := db.Query(
-			`SELECT id, name FROM positions ORDER BY id`,
+			`SELECT id, name, employee_full_name FROM positions ORDER BY id`,
 		)
 		defer rows.Close()
 
 		for rows.Next() {
 			var positionID int64
 			var positionName string
-			if err := rows.Scan(&positionID, &positionName); err == nil {
+			var employeeFullName sql.NullString
+			if err := rows.Scan(&positionID, &positionName, &employeeFullName); err == nil {
 				idStr := fmt.Sprint(positionID)
+				var employeeFullNamePtr *string
+				if employeeFullName.Valid && employeeFullName.String != "" {
+					employeeFullNamePtr = &employeeFullName.String
+				}
 				structure.Root.Children = append(structure.Root.Children, TreeNode{
-					Type:         "position",
-					PositionID:   &idStr,
-					PositionName: &positionName,
-					Children:     []TreeNode{},
+					Type:            "position",
+					PositionID:      &idStr,
+					PositionName:    &positionName,
+					EmployeeFullName: employeeFullNamePtr,
+					Children:        []TreeNode{},
 				})
 			}
 		}
@@ -43,24 +49,27 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 
 	// Get all positions в порядке их создания (по id)
 	rows, _ := db.Query(
-		`SELECT id, name, custom_fields FROM positions ORDER BY id`,
+		`SELECT id, name, custom_fields, employee_full_name FROM positions ORDER BY id`,
 	)
 	defer rows.Close()
 
 	var positions []struct {
-		ID           string
-		Name         string
-		CustomFields map[string]string
+		ID             string
+		Name           string
+		CustomFields   map[string]string
+		EmployeeFullName *string
 	}
 
 	for rows.Next() {
 		var p struct {
-			ID           string
-			Name         string
-			CustomFields map[string]string
+			ID             string
+			Name           string
+			CustomFields   map[string]string
+			EmployeeFullName *string
 		}
 		var customFieldsJSON []byte
-		if err := rows.Scan(&p.ID, &p.Name, &customFieldsJSON); err == nil {
+		var employeeFullName sql.NullString
+		if err := rows.Scan(&p.ID, &p.Name, &customFieldsJSON, &employeeFullName); err == nil {
 			if customFieldsJSON != nil {
 				// Сначала читаем в map[string]interface{}, затем нормализуем в строки
 				var rawFields map[string]interface{}
@@ -74,6 +83,9 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 			}
 			if p.CustomFields == nil {
 				p.CustomFields = make(map[string]string)
+			}
+			if employeeFullName.Valid && employeeFullName.String != "" {
+				p.EmployeeFullName = &employeeFullName.String
 			}
 			positions = append(positions, p)
 		}
@@ -95,9 +107,10 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 	// Filter positions passed into tree‑builder so, что в саму иерархию попадают
 	// только должности, у которых есть хотя бы одно значимое значение уровня.
 	var structuredPositions []struct {
-		ID           string
-		Name         string
-		CustomFields map[string]string
+		ID             string
+		Name           string
+		CustomFields   map[string]string
+		EmployeeFullName *string
 	}
 	for _, pos := range positions {
 		if structuredPositionIDs[pos.ID] {
@@ -110,9 +123,10 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 
 	// Collect positions that don't participate in the tree at all (no values for any tree level keys)
 	unstructuredPositions := make([]struct {
-		ID           string
-		Name         string
-		CustomFields map[string]string
+		ID             string
+		Name           string
+		CustomFields   map[string]string
+		EmployeeFullName *string
 	}, 0)
 
 	for _, pos := range positions {
@@ -128,10 +142,11 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 			positionID := pos.ID
 			positionName := pos.Name
 			unstructuredNodes = append(unstructuredNodes, TreeNode{
-				Type:         "position",
-				PositionID:   &positionID,
-				PositionName: &positionName,
-				Children:     []TreeNode{},
+				Type:            "position",
+				PositionID:      &positionID,
+				PositionName:    &positionName,
+				EmployeeFullName: pos.EmployeeFullName,
+				Children:        []TreeNode{},
 			})
 		}
 
@@ -158,10 +173,11 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 			positionID := pos.ID
 			positionName := pos.Name
 			flat = append(flat, TreeNode{
-				Type:         "position",
-				PositionID:   &positionID,
-				PositionName: &positionName,
-				Children:     []TreeNode{},
+				Type:            "position",
+				PositionID:      &positionID,
+				PositionName:    &positionName,
+				EmployeeFullName: pos.EmployeeFullName,
+				Children:        []TreeNode{},
 			})
 		}
 		// Сохраняем порядок по id (как пришло из БД), без сортировки по имени
@@ -174,9 +190,10 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 }
 
 func buildTreeLevel(positions []struct {
-	ID           string
-	Name         string
-	CustomFields map[string]string
+	ID             string
+	Name           string
+	CustomFields   map[string]string
+	EmployeeFullName *string
 }, levels []TreeLevel, levelIndex int, path map[string]string) []TreeNode {
 	if levelIndex >= len(levels) {
 		// Leaf level - return positions
@@ -187,10 +204,11 @@ func buildTreeLevel(positions []struct {
 				positionID := pos.ID
 				positionName := pos.Name
 				nodes = append(nodes, TreeNode{
-					Type:         "position",
-					PositionID:   &positionID,
-					PositionName: &positionName,
-					Children:     []TreeNode{},
+					Type:            "position",
+					PositionID:      &positionID,
+					PositionName:    &positionName,
+					EmployeeFullName: pos.EmployeeFullName,
+					Children:        []TreeNode{},
 				})
 			}
 		}
@@ -205,9 +223,10 @@ func buildTreeLevel(positions []struct {
 
 	valueSet := make(map[string]bool)
 	var positionsWithoutValue []struct {
-		ID           string
-		Name         string
-		CustomFields map[string]string
+		ID             string
+		Name           string
+		CustomFields   map[string]string
+		EmployeeFullName *string
 	}
 	for _, pos := range positions {
 		if !matchesPath(pos.CustomFields, path) {
@@ -231,10 +250,11 @@ func buildTreeLevel(positions []struct {
 			positionID := pos.ID
 			positionName := pos.Name
 			nodes = append(nodes, TreeNode{
-				Type:         "position",
-				PositionID:   &positionID,
-				PositionName: &positionName,
-				Children:     []TreeNode{},
+				Type:            "position",
+				PositionID:      &positionID,
+				PositionName:    &positionName,
+				EmployeeFullName: pos.EmployeeFullName,
+				Children:        []TreeNode{},
 			})
 		}
 		// Сохраняем порядок по id (как пришло из БД), без сортировки по имени
@@ -272,10 +292,11 @@ func buildTreeLevel(positions []struct {
 		positionID := pos.ID
 		positionName := pos.Name
 		nodes = append(nodes, TreeNode{
-			Type:         "position",
-			PositionID:   &positionID,
-			PositionName: &positionName,
-			Children:     []TreeNode{},
+			Type:            "position",
+			PositionID:      &positionID,
+			PositionName:    &positionName,
+			EmployeeFullName: pos.EmployeeFullName,
+			Children:        []TreeNode{},
 		})
 	}
 
