@@ -59,8 +59,8 @@ function AppLayout() {
       localStorage.setItem(STORAGE_KEYS.SELECTED_POSITION_ID, savedPositionId.toString());
       localStorage.removeItem(STORAGE_KEYS.SELECTED_NODE_PATH);
     }
+    // Обновляем список должностей - TreePanel автоматически перестроит дерево локально
     setRefreshTrigger(prev => prev + 1);
-    setTreeRefreshTrigger(prev => prev + 1);
   };
 
   // Функция для поиска родительского узла по path
@@ -157,13 +157,11 @@ function AppLayout() {
         localStorage.removeItem(STORAGE_KEYS.SELECTED_NODE_PATH);
       }
     }
+    // Обновляем список должностей - TreePanel автоматически перестроит дерево локально
     setRefreshTrigger(prev => prev + 1);
-    setTreeRefreshTrigger(prev => prev + 1);
   };
 
   const handlePositionCreated = (createdPositionId) => {
-    setRefreshTrigger(prev => prev + 1);
-    setTreeRefreshTrigger(prev => prev + 1);
     if (createdPositionId) {
       setSelectedPositionId(createdPositionId);
       // Очищаем выбранный узел, чтобы открылась карточка должности
@@ -174,6 +172,8 @@ function AppLayout() {
       localStorage.setItem(STORAGE_KEYS.SELECTED_POSITION_ID, createdPositionId.toString());
       localStorage.removeItem(STORAGE_KEYS.SELECTED_NODE_PATH);
     }
+    // Обновляем список должностей - TreePanel автоматически перестроит дерево локально
+    setRefreshTrigger(prev => prev + 1);
   };
 
   const handleNodeSelect = (node) => {

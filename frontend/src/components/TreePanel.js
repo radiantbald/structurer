@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import TreeView from './TreeView';
 import TreeSelector from './TreeSelector';
+import { buildTreeStructureLocally } from '../utils/treeBuilder';
 import './TreePanel.css';
 
 const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:8080/api';
@@ -16,22 +17,31 @@ function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onSho
     return saved !== null ? saved : null;
   });
   const [treeStructure, setTreeStructure] = useState(null);
+  const [positions, setPositions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadingTree, setLoadingTree] = useState(false);
+  const positionsRef = useRef([]);
 
   useEffect(() => {
     loadTrees();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [treeRefreshTrigger]);
 
+  // Загружаем список должностей
   useEffect(() => {
-    // Не загружаем структуру, пока не загружены деревья
+    loadPositions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshTrigger]);
+
+  // Обновляем структуру дерева при изменении должностей, выбранного дерева или списка деревьев
+  useEffect(() => {
+    // Не обновляем структуру, пока не загружены деревья
     if (loading) {
       return;
     }
     
     if (selectedTreeId && selectedTreeId !== '') {
-      // Проверяем, что дерево существует в списке перед загрузкой структуры
+      // Проверяем, что дерево существует в списке
       if (trees.length > 0 && !trees.some(t => String(t.id) === String(selectedTreeId))) {
         // Дерево не найдено, очищаем выбор
         setSelectedTreeId(null);
@@ -39,13 +49,14 @@ function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onSho
         localStorage.removeItem(STORAGE_KEY_SELECTED_TREE_ID);
         return;
       }
-      loadTreeStructure(selectedTreeId);
+      rebuildTreeStructureLocally(selectedTreeId);
     } else {
-      // Когда выбрано "Плоское" (пустое значение), загружаем все должности как плоский список
-      loadFlatStructure();
+      // Когда выбрано "Плоское" (пустое значение), создаем плоскую структуру
+      rebuildFlatStructureLocally();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTreeId, refreshTrigger, trees, loading]);
+  }, [selectedTreeId, positions, trees, loading]);
+
 
   const loadTrees = async () => {
     try {
@@ -84,51 +95,85 @@ function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onSho
     }
   };
 
-  const loadFlatStructure = async () => {
+  const loadPositions = async () => {
     try {
-      setLoadingTree(true);
-      // Загружаем все должности
       const response = await axios.get(`${API_BASE}/positions`, {
         params: {
           limit: 10000, // Большой лимит, чтобы получить все должности
           offset: 0
         }
       });
-      const positions = response.data?.items || [];
-      
-      // Создаем плоскую структуру дерева со всеми должностями в корне
-      const flatStructure = {
-        tree_id: '',
-        name: 'Плоское',
-        levels: [],
-        root: {
-          type: 'root',
-          children: positions.map(pos => ({
-            type: 'position',
-            position_id: String(pos.id),
-            position_name: pos.name,
-            employee_full_name: pos.employee_full_name || null,
-            children: []
-          }))
-        }
-      };
-      
-      setTreeStructure(flatStructure);
-      if (onTreeStructureChange) {
-        onTreeStructureChange(flatStructure);
-      }
+      const positionsData = response.data?.items || [];
+      setPositions(positionsData);
+      positionsRef.current = positionsData;
     } catch (error) {
-      console.error('Failed to load flat structure:', error);
+      console.error('Failed to load positions:', error);
+      alert('Ошибка при загрузке должностей: ' + (error.response?.data?.error || error.message));
+    }
+  };
+
+  const rebuildFlatStructureLocally = () => {
+    const flatStructure = {
+      tree_id: '',
+      name: 'Плоское',
+      levels: [],
+      root: {
+        type: 'root',
+        children: positionsRef.current.map(pos => ({
+          type: 'position',
+          position_id: String(pos.id),
+          position_name: pos.name,
+          employee_full_name: pos.employee_full_name || null,
+          children: []
+        }))
+      }
+    };
+    
+    setTreeStructure(flatStructure);
+    if (onTreeStructureChange) {
+      onTreeStructureChange(flatStructure);
+    }
+  };
+
+  const rebuildTreeStructureLocally = (treeId) => {
+    if (!treeId) {
       setTreeStructure(null);
       if (onTreeStructureChange) {
         onTreeStructureChange(null);
       }
-      alert('Ошибка при загрузке должностей: ' + (error.response?.data?.error || error.message));
+      return;
+    }
+
+    const treeDefinition = trees.find(t => String(t.id) === String(treeId));
+    if (!treeDefinition) {
+      setTreeStructure(null);
+      if (onTreeStructureChange) {
+        onTreeStructureChange(null);
+      }
+      return;
+    }
+
+    try {
+      setLoadingTree(true);
+      const structure = buildTreeStructureLocally(positionsRef.current, treeDefinition);
+      setTreeStructure(structure);
+      if (onTreeStructureChange) {
+        onTreeStructureChange(structure);
+      }
+    } catch (error) {
+      console.error('Failed to rebuild tree structure locally:', error);
+      setTreeStructure(null);
+      if (onTreeStructureChange) {
+        onTreeStructureChange(null);
+      }
     } finally {
       setLoadingTree(false);
     }
   };
 
+
+  // Эта функция больше не используется для обновления после операций с должностями,
+  // но оставляем её для первоначальной загрузки при смене дерева (если нужно)
   const loadTreeStructure = async (treeId) => {
     if (!treeId) {
       setTreeStructure(null);
@@ -138,33 +183,8 @@ function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onSho
       }
       return;
     }
-    try {
-      setLoadingTree(true);
-      const response = await axios.get(`${API_BASE}/trees/${treeId}/structure`);
-      setTreeStructure(response.data);
-      if (onTreeStructureChange) {
-        onTreeStructureChange(response.data);
-      }
-    } catch (error) {
-      console.error('Failed to load tree structure:', error);
-      setTreeStructure(null);
-      if (onTreeStructureChange) {
-        onTreeStructureChange(null);
-      }
-      
-      // Если дерево не найдено (400 или 404), очищаем сохраненный выбор
-      if (error.response?.status === 400 || error.response?.status === 404) {
-        setSelectedTreeId(null);
-        localStorage.removeItem(STORAGE_KEY_SELECTED_TREE_ID);
-      }
-      
-      // Показываем ошибку только если это не ожидаемая ошибка (дерево не найдено)
-      if (error.response?.status !== 400 && error.response?.status !== 404) {
-        alert('Ошибка при загрузке структуры дерева: ' + (error.response?.data?.error || error.message));
-      }
-    } finally {
-      setLoadingTree(false);
-    }
+    // Используем локальное построение вместо HTTP запроса
+    rebuildTreeStructureLocally(treeId);
   };
 
   const handleTreeChange = (treeId) => {
@@ -193,16 +213,17 @@ function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onSho
 
         const createdPositionId = response.data.id;
 
-        // Сообщаем наверх, что появилась новая должность, чтобы обновить дерево/список
-        // Передаем ID созданной позиции, чтобы её можно было открыть
+        // Обновляем список должностей и перестраиваем дерево локально
+        await loadPositions();
+        if (selectedTreeId && selectedTreeId !== '') {
+          rebuildTreeStructureLocally(selectedTreeId);
+        } else {
+          rebuildFlatStructureLocally();
+        }
+
+        // Сообщаем наверх, что появилась новая должность
         if (onPositionCreated) {
           onPositionCreated(createdPositionId);
-        } else if (selectedTreeId) {
-          // На всякий случай локально перезагрузим структуру дерева
-          loadTreeStructure(selectedTreeId);
-        } else {
-          // Если выбрано "Плоское", перезагружаем плоскую структуру
-          loadFlatStructure();
         }
       } catch (error) {
         console.error('Failed to create position from tree node:', error);
