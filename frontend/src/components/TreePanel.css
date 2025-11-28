@@ -18,6 +18,33 @@
   gap: 0.5rem;
 }
 
+.tree-panel-selector-row {
+  display: flex;
+  flex-direction: row;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.tree-panel-selector-row .tree-selector {
+  flex: 1;
+  min-width: 0;
+}
+
+.tree-panel-search {
+  flex: 1;
+  min-width: 0;
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.tree-panel-search:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+}
+
 .tree-panel-actions {
   display: flex;
   flex-direction: row;

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import TreeNode from './TreeNode';
 import './TreeView.css';
 
-function TreeView({ tree, onPositionSelect, onCreateFromNode, onNodeSelect, selectedNode, selectedPositionId }) {
+function TreeView({ tree, onPositionSelect, onCreateFromNode, onNodeSelect, selectedNode, selectedPositionId, searchQuery, subtreeContainsMatchingPositions }) {
   const [newRootPositionName, setNewRootPositionName] = useState('');
 
   const handleRootQuickCreate = (e, nameOverride) => {
@@ -41,6 +41,8 @@ function TreeView({ tree, onPositionSelect, onCreateFromNode, onNodeSelect, sele
         onNodeSelect={onNodeSelect}
         selectedNode={selectedNode}
         selectedPositionId={selectedPositionId}
+        searchQuery={searchQuery}
+        subtreeContainsMatchingPositions={subtreeContainsMatchingPositions}
       />
       <div
         className="tree-node-quick-create"

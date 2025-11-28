@@ -42,7 +42,7 @@ const countAllPositions = (node) => {
   return count;
 };
 
-function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNodeSelect, selectedNode, selectedPositionId }) {
+function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNodeSelect, selectedNode, selectedPositionId, searchQuery, subtreeContainsMatchingPositions }) {
   const [expanded, setExpanded] = useState(level < 2);
   const [newPositionName, setNewPositionName] = useState('');
 
@@ -81,11 +81,18 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
         shouldExpand = true;
       }
       
+      // Проверяем, содержит ли узел позиции, соответствующие поиску
+      if (!shouldExpand && searchQuery && searchQuery.trim() && subtreeContainsMatchingPositions) {
+        if (subtreeContainsMatchingPositions(node, searchQuery)) {
+          shouldExpand = true;
+        }
+      }
+      
       if (shouldExpand) {
         setExpanded(true);
       }
     }
-  }, [selectedNode, selectedPositionId, node, containsSelectedPosition]);
+  }, [selectedNode, selectedPositionId, node, containsSelectedPosition, searchQuery, subtreeContainsMatchingPositions]);
 
   const handleToggle = (e) => {
     e.stopPropagation();
@@ -148,6 +155,8 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
                 onNodeSelect={onNodeSelect}
                 selectedNode={selectedNode}
                 selectedPositionId={selectedPositionId}
+                searchQuery={searchQuery}
+                subtreeContainsMatchingPositions={subtreeContainsMatchingPositions}
               />
             ))}
       </div>
@@ -255,6 +264,8 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
                 onNodeSelect={onNodeSelect}
                 selectedNode={selectedNode}
                 selectedPositionId={selectedPositionId}
+                searchQuery={searchQuery}
+                subtreeContainsMatchingPositions={subtreeContainsMatchingPositions}
               />
             ))}
             {/* Затем действия (форма быстрого создания) */}
@@ -293,6 +304,8 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
                 onNodeSelect={onNodeSelect}
                 selectedNode={selectedNode}
                 selectedPositionId={selectedPositionId}
+                searchQuery={searchQuery}
+                subtreeContainsMatchingPositions={subtreeContainsMatchingPositions}
               />
             ))}
           </div>

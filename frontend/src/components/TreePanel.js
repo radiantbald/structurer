@@ -20,7 +20,9 @@ function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onSho
   const [positions, setPositions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadingTree, setLoadingTree] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const positionsRef = useRef([]);
+  const allPositionsRef = useRef([]);
 
   useEffect(() => {
     loadTrees();
@@ -56,6 +58,14 @@ function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onSho
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTreeId, positions, trees, loading]);
+
+  // Применяем фильтр при изменении поискового запроса
+  useEffect(() => {
+    if (allPositionsRef.current.length > 0) {
+      applySearchFilter(allPositionsRef.current, searchQuery);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery]);
 
 
   const loadTrees = async () => {
@@ -104,12 +114,164 @@ function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onSho
         }
       });
       const positionsData = response.data?.items || [];
-      setPositions(positionsData);
-      positionsRef.current = positionsData;
+      allPositionsRef.current = positionsData;
+      // Применяем фильтр поиска
+      applySearchFilter(positionsData, searchQuery);
     } catch (error) {
       console.error('Failed to load positions:', error);
       alert('Ошибка при загрузке должностей: ' + (error.response?.data?.error || error.message));
     }
+  };
+
+  // Функция для проверки, соответствует ли позиция поисковому запросу
+  const matchesSearch = (position, query) => {
+    if (!query || !query.trim()) {
+      return true;
+    }
+
+    const searchText = query.trim();
+    const searchLower = searchText.toLowerCase();
+
+    // Проверяем наличие AND/OR операторов (регистронезависимо)
+    const hasAnd = / and /i.test(searchText);
+    const hasOr = / or /i.test(searchText);
+
+    if (hasAnd || hasOr) {
+      // Разбиваем по AND (приоритет выше, регистронезависимо)
+      let parts = [];
+      if (hasAnd) {
+        parts = searchText.split(/ and /i).map(p => p.trim());
+      } else {
+        parts = [searchText];
+      }
+
+      // Проверяем каждую часть (которая может содержать OR)
+      for (const part of parts) {
+        if (/ or /i.test(part)) {
+          // OR логика: хотя бы одно условие должно совпадать
+          const orParts = part.split(/ or /i).map(p => p.trim());
+          let orMatch = false;
+          for (const orPart of orParts) {
+            if (orPart && matchesSingleTerm(position, orPart)) {
+              orMatch = true;
+              break;
+            }
+          }
+          if (!orMatch) {
+            return false; // Если ни одно OR условие не совпало, вся AND группа не совпадает
+          }
+        } else {
+          // AND логика: условие должно совпадать
+          if (part && !matchesSingleTerm(position, part)) {
+            return false;
+          }
+        }
+      }
+      return true;
+    } else {
+      // Простой поиск без операторов
+      return matchesSingleTerm(position, searchText);
+    }
+  };
+
+  // Функция для проверки соответствия одному поисковому термину
+  const matchesSingleTerm = (position, term) => {
+    if (!term) return true;
+
+    const termLower = term.toLowerCase();
+    
+    // Поиск по имени
+    if (position.name && position.name.toLowerCase().includes(termLower)) {
+      return true;
+    }
+    
+    // Поиск по описанию
+    if (position.description && position.description.toLowerCase().includes(termLower)) {
+      return true;
+    }
+    
+    // Поиск по имени сотрудника
+    if (position.employee_full_name && position.employee_full_name.toLowerCase().includes(termLower)) {
+      return true;
+    }
+    
+    // Поиск по кастомным полям
+    if (position.custom_fields && typeof position.custom_fields === 'object') {
+      const customFieldsStr = JSON.stringify(position.custom_fields).toLowerCase();
+      if (customFieldsStr.includes(termLower)) {
+        return true;
+      }
+    }
+    
+    return false;
+  };
+
+  // Применяем фильтр поиска к позициям
+  const applySearchFilter = (allPositions, query) => {
+    if (!query || !query.trim()) {
+      setPositions(allPositions);
+      positionsRef.current = allPositions;
+      return;
+    }
+
+    const filtered = allPositions.filter(pos => matchesSearch(pos, query));
+    setPositions(filtered);
+    positionsRef.current = filtered;
+  };
+
+  // Обработчик изменения поискового запроса
+  const handleSearchChange = (e) => {
+    const query = e.target.value;
+    setSearchQuery(query);
+    applySearchFilter(allPositionsRef.current, query);
+  };
+
+  // Функция для проверки, соответствует ли узел дерева поисковому запросу
+  // Работает с узлами типа 'position' из структуры дерева
+  const nodeMatchesSearch = (node, query) => {
+    if (!query || !query.trim()) {
+      return true;
+    }
+
+    // Если это узел позиции, проверяем его данные
+    if (node.type === 'position') {
+      // Получаем полные данные позиции из allPositionsRef, если они есть
+      const positionId = node.position_id;
+      const fullPosition = allPositionsRef.current.find(p => String(p.id) === positionId);
+      
+      if (fullPosition) {
+        // Используем полные данные позиции
+        return matchesSearch(fullPosition, query);
+      } else {
+        // Если полных данных нет, проверяем только то, что есть в узле
+        const positionData = {
+          name: node.position_name || '',
+          description: '',
+          employee_full_name: node.employee_full_name || '',
+          custom_fields: {}
+        };
+        return matchesSearch(positionData, query);
+      }
+    }
+
+    return false;
+  };
+
+  // Функция для проверки, содержит ли поддерево узла позиции, соответствующие поиску
+  const subtreeContainsMatchingPositions = (node, query) => {
+    if (!node) return false;
+
+    // Проверяем текущий узел
+    if (nodeMatchesSearch(node, query)) {
+      return true;
+    }
+
+    // Рекурсивно проверяем дочерние узлы
+    if (node.children && node.children.length > 0) {
+      return node.children.some(child => subtreeContainsMatchingPositions(child, query));
+    }
+
+    return false;
   };
 
   const rebuildFlatStructureLocally = () => {
@@ -263,11 +425,20 @@ function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onSho
             Деревья
           </button>
         </div>
-        <TreeSelector
-          trees={trees}
-          selectedTreeId={selectedTreeId}
-          onChange={handleTreeChange}
-        />
+        <div className="tree-panel-selector-row">
+          <TreeSelector
+            trees={trees}
+            selectedTreeId={selectedTreeId}
+            onChange={handleTreeChange}
+          />
+          <input
+            type="text"
+            className="tree-panel-search"
+            placeholder="Поиск (AND/OR)"
+            value={searchQuery}
+            onChange={handleSearchChange}
+          />
+        </div>
       </div>
       {loadingTree ? (
         <div className="tree-panel-loading">Загрузка дерева...</div>
@@ -279,6 +450,8 @@ function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onSho
           onNodeSelect={onNodeSelect}
           selectedNode={selectedNode}
           selectedPositionId={selectedPositionId}
+          searchQuery={searchQuery}
+          subtreeContainsMatchingPositions={subtreeContainsMatchingPositions}
         />
       ) : null}
     </div>

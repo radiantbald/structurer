@@ -44,10 +44,85 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 	var args []interface{}
 
 	if search != "" {
-		query = `SELECT id, name, description, custom_fields, employee_full_name, 
-			employee_external_id, employee_profile_url, created_at, updated_at
-			FROM positions WHERE name ILIKE $1 ORDER BY id LIMIT $2 OFFSET $3`
-		args = []interface{}{"%" + search + "%", limit, offset}
+		// Parse search query for AND/OR operators
+		// Split by AND/OR (case insensitive)
+		searchLower := strings.ToLower(search)
+		hasAnd := strings.Contains(searchLower, " and ")
+		hasOr := strings.Contains(searchLower, " or ")
+		
+		if hasAnd || hasOr {
+			// Advanced search with AND/OR
+			var conditions []string
+			var queryArgs []interface{}
+			argIndex := 1
+			
+			// Split by AND first (higher priority)
+			var parts []string
+			if hasAnd {
+				parts = strings.Split(search, " AND ")
+				for i, part := range parts {
+					parts[i] = strings.TrimSpace(part)
+				}
+			} else {
+				parts = []string{search}
+			}
+			
+			// Process each part (which may contain OR)
+			for _, part := range parts {
+				if strings.Contains(strings.ToLower(part), " or ") {
+					orParts := strings.Split(part, " OR ")
+					var orConditions []string
+					for _, orPart := range orParts {
+						orPart = strings.TrimSpace(orPart)
+						if orPart != "" {
+							orConditions = append(orConditions, 
+								`(name ILIKE $`+strconv.Itoa(argIndex)+` OR 
+								COALESCE(description, '') ILIKE $`+strconv.Itoa(argIndex)+` OR 
+								COALESCE(employee_full_name, '') ILIKE $`+strconv.Itoa(argIndex)+` OR
+								custom_fields::text ILIKE $`+strconv.Itoa(argIndex)+`)`)
+							queryArgs = append(queryArgs, "%"+orPart+"%")
+							argIndex++
+						}
+					}
+					if len(orConditions) > 0 {
+						conditions = append(conditions, "("+strings.Join(orConditions, " OR ")+")")
+					}
+				} else {
+					if part != "" {
+						conditions = append(conditions, 
+							`(name ILIKE $`+strconv.Itoa(argIndex)+` OR 
+							COALESCE(description, '') ILIKE $`+strconv.Itoa(argIndex)+` OR 
+							COALESCE(employee_full_name, '') ILIKE $`+strconv.Itoa(argIndex)+` OR
+							custom_fields::text ILIKE $`+strconv.Itoa(argIndex)+`)`)
+						queryArgs = append(queryArgs, "%"+part+"%")
+						argIndex++
+					}
+				}
+			}
+			
+			if len(conditions) > 0 {
+				whereClause := strings.Join(conditions, " AND ")
+				query = `SELECT id, name, description, custom_fields, employee_full_name, 
+					employee_external_id, employee_profile_url, created_at, updated_at
+					FROM positions WHERE ` + whereClause + ` ORDER BY id LIMIT $` + strconv.Itoa(argIndex) + ` OFFSET $` + strconv.Itoa(argIndex+1)
+				queryArgs = append(queryArgs, limit, offset)
+				args = queryArgs
+			} else {
+				query = `SELECT id, name, description, custom_fields, employee_full_name, 
+					employee_external_id, employee_profile_url, created_at, updated_at
+					FROM positions ORDER BY id LIMIT $1 OFFSET $2`
+				args = []interface{}{limit, offset}
+			}
+		} else {
+			// Simple search
+			query = `SELECT id, name, description, custom_fields, employee_full_name, 
+				employee_external_id, employee_profile_url, created_at, updated_at
+				FROM positions WHERE (name ILIKE $1 OR 
+				COALESCE(description, '') ILIKE $1 OR 
+				COALESCE(employee_full_name, '') ILIKE $1 OR
+				custom_fields::text ILIKE $1) ORDER BY id LIMIT $2 OFFSET $3`
+			args = []interface{}{"%" + search + "%", limit, offset}
+		}
 	} else {
 		query = `SELECT id, name, description, custom_fields, employee_full_name, 
 			employee_external_id, employee_profile_url, created_at, updated_at
@@ -83,8 +158,71 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 	var total int
 	countQuery := "SELECT COUNT(*) FROM positions"
 	if search != "" {
-		countQuery = "SELECT COUNT(*) FROM positions WHERE name ILIKE $1"
-		h.db.QueryRow(countQuery, "%"+search+"%").Scan(&total)
+		// Use same logic for count query
+		searchLower := strings.ToLower(search)
+		hasAnd := strings.Contains(searchLower, " and ")
+		hasOr := strings.Contains(searchLower, " or ")
+		
+		if hasAnd || hasOr {
+			var conditions []string
+			var countArgs []interface{}
+			argIndex := 1
+			
+			var parts []string
+			if hasAnd {
+				parts = strings.Split(search, " AND ")
+				for i, part := range parts {
+					parts[i] = strings.TrimSpace(part)
+				}
+			} else {
+				parts = []string{search}
+			}
+			
+			for _, part := range parts {
+				if strings.Contains(strings.ToLower(part), " or ") {
+					orParts := strings.Split(part, " OR ")
+					var orConditions []string
+					for _, orPart := range orParts {
+						orPart = strings.TrimSpace(orPart)
+						if orPart != "" {
+							orConditions = append(orConditions, 
+								`(name ILIKE $`+strconv.Itoa(argIndex)+` OR 
+								COALESCE(description, '') ILIKE $`+strconv.Itoa(argIndex)+` OR 
+								COALESCE(employee_full_name, '') ILIKE $`+strconv.Itoa(argIndex)+` OR
+								custom_fields::text ILIKE $`+strconv.Itoa(argIndex)+`)`)
+							countArgs = append(countArgs, "%"+orPart+"%")
+							argIndex++
+						}
+					}
+					if len(orConditions) > 0 {
+						conditions = append(conditions, "("+strings.Join(orConditions, " OR ")+")")
+					}
+				} else {
+					if part != "" {
+						conditions = append(conditions, 
+							`(name ILIKE $`+strconv.Itoa(argIndex)+` OR 
+							COALESCE(description, '') ILIKE $`+strconv.Itoa(argIndex)+` OR 
+							COALESCE(employee_full_name, '') ILIKE $`+strconv.Itoa(argIndex)+` OR
+							custom_fields::text ILIKE $`+strconv.Itoa(argIndex)+`)`)
+						countArgs = append(countArgs, "%"+part+"%")
+						argIndex++
+					}
+				}
+			}
+			
+			if len(conditions) > 0 {
+				countQuery = "SELECT COUNT(*) FROM positions WHERE " + strings.Join(conditions, " AND ")
+				h.db.QueryRow(countQuery, countArgs...).Scan(&total)
+			} else {
+				h.db.QueryRow(countQuery).Scan(&total)
+			}
+		} else {
+			countQuery = `SELECT COUNT(*) FROM positions WHERE (name ILIKE $1 OR 
+				COALESCE(description, '') ILIKE $1 OR 
+				COALESCE(employee_full_name, '') ILIKE $1 OR
+				custom_fields::text ILIKE $1)`
+			h.db.QueryRow(countQuery, "%"+search+"%").Scan(&total)
+		}
 	} else {
 		h.db.QueryRow(countQuery).Scan(&total)
 	}
