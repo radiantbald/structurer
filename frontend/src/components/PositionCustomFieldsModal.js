@@ -40,36 +40,73 @@ function PositionCustomFieldsModal({
                 // Нормализуем текущее значение для поиска совпадения
                 const normalizedCurrentValue = value ? String(value).trim() : '';
                 
-                // Находим текущее выбранное значение среди allowed_values
-                // Учитываем, что значение могло быть установлено через прилинкованное поле
+                // Извлекаем основную часть значения (до первого тире, если есть)
+                // Это нужно для случаев, когда значение было сохранено как "Value1 - LinkedValue1"
+                const extractMainValue = (val) => {
+                  if (!val) return '';
+                  const trimmed = val.trim();
+                  // Если есть тире, берем часть до первого тире
+                  const dashIndex = trimmed.indexOf(' - ');
+                  return dashIndex >= 0 ? trimmed.substring(0, dashIndex).trim() : trimmed;
+                };
+                
+                const mainValue = extractMainValue(normalizedCurrentValue);
+                
+                // Находим текущее выбранное значение среди опций селектора
+                // Опции теперь содержат полное значение с тире (если есть привязанные поля)
                 let currentValueForSelect = '';
-                if (isEnum && normalizedCurrentValue) {
-                  // Нормализуем все значения из allowed_values для сравнения
-                  const normalizedAllowedValues = fieldDef.allowed_values.map(v => ({
-                    original: v,
-                    normalized: typeof v === 'string' ? v.trim() : String(v.value || '').trim(),
-                    valueId: typeof v === 'object' && v.value_id ? String(v.value_id).trim() : null
-                  }));
-                  
-                  // Сначала пытаемся найти точное совпадение по значению
-                  let matched = normalizedAllowedValues.find(nv => 
-                    nv.normalized === normalizedCurrentValue
-                  );
-                  
-                  // Если не нашли, пытаемся найти по value_id
-                  if (!matched) {
-                    matched = normalizedAllowedValues.find(nv => 
-                      nv.valueId && nv.valueId === normalizedCurrentValue
-                    );
-                  }
-                  
-                  // Если нашли совпадение, используем нормализованное значение из allowed_values
-                  if (matched) {
-                    currentValueForSelect = matched.normalized;
-                  } else {
-                    // Если не нашли в allowed_values, но значение есть - возможно, это прилинкованное значение
-                    // Используем сохраненное значение, чтобы оно отобразилось (даже если не в списке)
-                    currentValueForSelect = normalizedCurrentValue;
+                
+                if (isEnum) {
+                  if (normalizedCurrentValue) {
+                    // Создаем карту полных значений (с тире) для поиска
+                    const fullValueMap = new Map();
+                    
+                    // Строим полные значения для каждой опции
+                    fieldDef.allowed_values.forEach((val) => {
+                      const valueStr = typeof val === 'string' ? val.trim() : String(val.value || '').trim();
+                      const hasLinked = typeof val === 'object' && val.linked_custom_fields && val.linked_custom_fields.length > 0;
+                      const linkedValues = hasLinked 
+                        ? val.linked_custom_fields.flatMap(lf => 
+                            lf.linked_custom_field_values.map(lv => String(lv.linked_custom_field_value || '').trim())
+                          )
+                        : [];
+                      
+                      // Формируем полное значение с тире (как в опциях)
+                      const fullValue = linkedValues.length > 0
+                        ? `${valueStr} - ${linkedValues.join(' - ')}`
+                        : valueStr;
+                      
+                      fullValueMap.set(fullValue, fullValue);
+                      // Также добавляем основное значение для обратной совместимости
+                      fullValueMap.set(valueStr, fullValue);
+                      
+                      // Также добавляем value_id как ключ, если есть
+                      if (typeof val === 'object' && val.value_id) {
+                        const valueIdStr = String(val.value_id).trim();
+                        fullValueMap.set(valueIdStr, fullValue);
+                      }
+                    });
+                    
+                    // Пытаемся найти полное значение в карте
+                    if (fullValueMap.has(normalizedCurrentValue)) {
+                      currentValueForSelect = fullValueMap.get(normalizedCurrentValue);
+                    } else {
+                      // Если не нашли точное совпадение, пробуем найти без учета регистра
+                      let found = false;
+                      for (const [mapKey, mapVal] of fullValueMap.entries()) {
+                        if (mapKey.toLowerCase() === normalizedCurrentValue.toLowerCase()) {
+                          currentValueForSelect = mapVal;
+                          found = true;
+                          break;
+                        }
+                      }
+                      
+                      // Если не нашли, используем сохраненное значение как есть
+                      // Оно будет добавлено как опция ниже (для обратной совместимости)
+                      if (!found) {
+                        currentValueForSelect = normalizedCurrentValue;
+                      }
+                    }
                   }
                 } else if (normalizedCurrentValue && !isEnum) {
                   // Для не-enum полей просто используем сохраненное значение
@@ -86,21 +123,30 @@ function PositionCustomFieldsModal({
                           onChange={(e) => {
                             const selectedValue = e.target.value;
                             // Нормализуем выбранное значение
+                            // Значение уже содержит тире, если есть привязанные поля (из value атрибута опции)
                             const normalizedValue = selectedValue.trim();
+                            
+                            // Сохраняем значение (оно уже содержит тире, если есть привязанные поля)
                             onChangeValue(key, normalizedValue);
                             
-                            // Если выбрано значение с привязанными полями, автоматически добавляем их
+                            // Если выбрано значение с привязанными полями, также добавляем их как отдельные поля
+                            // (для обратной совместимости и для возможности их редактирования)
                             if (normalizedValue) {
+                              // Извлекаем основную часть для поиска в allowed_values
+                              const dashIndex = normalizedValue.indexOf(' - ');
+                              const mainValue = dashIndex >= 0 
+                                ? normalizedValue.substring(0, dashIndex).trim() 
+                                : normalizedValue;
+                              
                               const selectedValObj = fieldDef.allowed_values.find(v => {
                                 const valStr = typeof v === 'string' ? v.trim() : String(v.value || '').trim();
-                                return valStr === normalizedValue;
+                                return valStr === mainValue;
                               });
                               
                               if (selectedValObj && typeof selectedValObj === 'object' && selectedValObj.linked_custom_fields) {
-                                // Автоматически добавляем привязанные значения
+                                // Автоматически добавляем привязанные значения как отдельные поля
                                 selectedValObj.linked_custom_fields.forEach(linkedField => {
                                   linkedField.linked_custom_field_values.forEach(linkedVal => {
-                                    // Добавляем привязанное значение только если оно еще не установлено
                                     const linkedKey = linkedField.linked_custom_field_key;
                                     if (!customFieldsValues[linkedKey]) {
                                       onChangeValue(linkedKey, String(linkedVal.linked_custom_field_value || '').trim());
@@ -114,6 +160,7 @@ function PositionCustomFieldsModal({
                           <option value="">Выберите значение...</option>
                           {fieldDef.allowed_values.map((val, idx) => {
                             // Поддержка нового формата (объект с value) и старого (строка)
+                            // Нормализуем точно так же, как при поиске значения
                             const valueStr = typeof val === 'string' ? val.trim() : String(val.value || '').trim();
                             const hasLinked = typeof val === 'object' && val.linked_custom_fields && val.linked_custom_fields.length > 0;
                             // Собираем все привязанные значения в один массив
@@ -122,21 +169,35 @@ function PositionCustomFieldsModal({
                                   lf.linked_custom_field_values.map(lv => String(lv.linked_custom_field_value || '').trim())
                                 )
                               : [];
-                            const linkedInfo = linkedValues.length > 0 
-                              ? ` (${linkedValues.join(', ')})`
-                              : '';
+                            
+                            // Формируем полное значение с тире для сохранения
+                            const fullValue = linkedValues.length > 0
+                              ? `${valueStr} - ${linkedValues.join(' - ')}`
+                              : valueStr;
+                            
+                            // Используем полное значение с тире в value атрибуте опции
                             return (
-                              <option key={`${key}-${valueStr}-${idx}`} value={valueStr}>
-                                {valueStr}{linkedInfo}
+                              <option key={`${key}-${valueStr}-${idx}`} value={fullValue}>
+                                {fullValue}
                               </option>
                             );
                           })}
                           {/* Добавляем опцию для текущего значения, если оно не найдено в allowed_values 
-                              (например, установлено через прилинкованное поле) */}
-                          {normalizedCurrentValue && currentValueForSelect === normalizedCurrentValue && 
+                              (например, установлено через прилинкованное поле, но не совпадает точно с опциями) */}
+                          {normalizedCurrentValue && 
                            !fieldDef.allowed_values.some(v => {
                              const valStr = typeof v === 'string' ? v.trim() : String(v.value || '').trim();
-                             return valStr === normalizedCurrentValue;
+                             const valId = typeof v === 'object' && v.value_id ? String(v.value_id).trim() : '';
+                             const hasLinked = typeof v === 'object' && v.linked_custom_fields && v.linked_custom_fields.length > 0;
+                             const linkedValues = hasLinked 
+                               ? v.linked_custom_fields.flatMap(lf => 
+                                   lf.linked_custom_field_values.map(lv => String(lv.linked_custom_field_value || '').trim())
+                                 )
+                               : [];
+                             const fullValue = linkedValues.length > 0
+                               ? `${valStr} - ${linkedValues.join(' - ')}`
+                               : valStr;
+                             return valStr === mainValue || valId === mainValue || fullValue === normalizedCurrentValue;
                            }) && (
                             <option key={`${key}-linked-${normalizedCurrentValue}`} value={normalizedCurrentValue}>
                               {normalizedCurrentValue}

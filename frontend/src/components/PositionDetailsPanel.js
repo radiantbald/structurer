@@ -68,16 +68,41 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
           if (fieldKey) {
             // Store value string (not value_id) to match select option values
             // Нормализуем значение, обрезая пробелы для точного совпадения
-            const normalizedValue = item.value ? String(item.value).trim() : '';
+            let normalizedValue = item.value ? String(item.value).trim() : '';
+            
+            // Если есть привязанные поля, объединяем их значения через тире
+            if (item.linked_custom_fields && Array.isArray(item.linked_custom_fields)) {
+              const linkedValues = [];
+              item.linked_custom_fields.forEach(linkedField => {
+                if (linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
+                  linkedField.linked_custom_field_values.forEach(linkedVal => {
+                    const normalizedLinkedValue = linkedVal.linked_custom_field_value ? String(linkedVal.linked_custom_field_value).trim() : '';
+                    if (normalizedLinkedValue) {
+                      linkedValues.push(normalizedLinkedValue);
+                    }
+                  });
+                }
+              });
+              
+              // Объединяем основное значение с привязанными через тире
+              if (linkedValues.length > 0) {
+                normalizedValue = `${normalizedValue} - ${linkedValues.join(' - ')}`;
+              }
+            }
+            
             customFieldsObj[fieldKey] = normalizedValue;
             
-            // Store linked values if they exist
+            // Также сохраняем привязанные значения как отдельные поля
+            // (для обратной совместимости и для возможности их редактирования)
             if (item.linked_custom_fields && Array.isArray(item.linked_custom_fields)) {
               item.linked_custom_fields.forEach(linkedField => {
                 if (linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
                   linkedField.linked_custom_field_values.forEach(linkedVal => {
                     const normalizedLinkedValue = linkedVal.linked_custom_field_value ? String(linkedVal.linked_custom_field_value).trim() : '';
-                    customFieldsObj[linkedField.linked_custom_field_key] = normalizedLinkedValue;
+                    // Сохраняем только если поле еще не установлено
+                    if (normalizedLinkedValue && !customFieldsObj[linkedField.linked_custom_field_key]) {
+                      customFieldsObj[linkedField.linked_custom_field_key] = normalizedLinkedValue;
+                    }
                   });
                 }
               });
