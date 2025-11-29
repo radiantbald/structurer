@@ -21,17 +21,29 @@ type Position struct {
 	UpdatedAt            time.Time       `json:"updated_at" db:"updated_at"`
 }
 
-// CustomFieldType represents the type of a custom field
-type CustomFieldType string
+// LinkedCustomFieldValue represents a linked custom field value
+type LinkedCustomFieldValue struct {
+	LinkedCustomFieldValueID    uuid.UUID `json:"linked_custom_field_value_id"`
+	LinkedCustomFieldValue      string    `json:"linked_custom_field_value"`
+}
 
-const (
-	CustomFieldTypeString CustomFieldType = "string"
-	CustomFieldTypeNumber CustomFieldType = "number"
-	CustomFieldTypeEnum   CustomFieldType = "enum"
-)
+// LinkedCustomField represents a linked custom field
+type LinkedCustomField struct {
+	LinkedCustomFieldID         uuid.UUID                `json:"linked_custom_field_id"`
+	LinkedCustomFieldKey        string                   `json:"linked_custom_field_key"`
+	LinkedCustomFieldLabel      string                   `json:"linked_custom_field_label"`
+	LinkedCustomFieldValues     []LinkedCustomFieldValue `json:"linked_custom_field_values"`
+}
 
-// AllowedValuesArray represents an array of allowed values for enum fields
-type AllowedValuesArray []interface{}
+// AllowedValue represents a single allowed value with optional linked fields
+type AllowedValue struct {
+	ValueID            uuid.UUID          `json:"value_id"`
+	Value              string             `json:"value"`
+	LinkedCustomFields []LinkedCustomField `json:"linked_custom_fields,omitempty"`
+}
+
+// AllowedValuesArray represents an array of allowed values
+type AllowedValuesArray []AllowedValue
 
 func (a AllowedValuesArray) Value() (driver.Value, error) {
 	if a == nil {
@@ -57,7 +69,6 @@ type CustomFieldDefinition struct {
 	ID           uuid.UUID          `json:"id" db:"id"`
 	Key          string             `json:"key" db:"key"`
 	Label        string             `json:"label" db:"label"`
-	Type         CustomFieldType    `json:"type" db:"type"`
 	AllowedValues *AllowedValuesArray `json:"allowed_values" db:"allowed_values"`
 	CreatedAt    time.Time          `json:"created_at" db:"created_at"`
 	UpdatedAt    time.Time          `json:"updated_at" db:"updated_at"`

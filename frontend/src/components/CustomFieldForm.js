@@ -10,7 +10,8 @@ function CustomFieldForm({ onClose, onSuccess }) {
     label: '',
     allowed_values: []
   });
-  const [allowedValuesInput, setAllowedValuesInput] = useState('');
+  const [currentValueInput, setCurrentValueInput] = useState('');
+  const [currentValueLinkedFields, setCurrentValueLinkedFields] = useState([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [existingFields, setExistingFields] = useState([]);
@@ -18,20 +19,12 @@ function CustomFieldForm({ onClose, onSuccess }) {
   const [existingError, setExistingError] = useState('');
   const [editingFieldId, setEditingFieldId] = useState(null);
   const [deletingFieldId, setDeletingFieldId] = useState(null);
-
-  const addAllowedValue = (rawValue) => {
-    const value = rawValue.trim();
-    if (!value) return;
-
-    setFormData(prev => {
-      const exists = prev.allowed_values.includes(value);
-      if (exists) return prev;
-      return {
-        ...prev,
-        allowed_values: [...prev.allowed_values, value]
-      };
-    });
-  };
+  
+  // Состояния для выпадающих списков привязки
+  const [showFieldDropdown, setShowFieldDropdown] = useState(false);
+  const [showValueDropdown, setShowValueDropdown] = useState(false);
+  const [selectedFieldForLink, setSelectedFieldForLink] = useState(null);
+  const [selectedValueForLink, setSelectedValueForLink] = useState(null);
 
   useEffect(() => {
     const loadExistingFields = async () => {
@@ -71,39 +64,146 @@ function CustomFieldForm({ onClose, onSuccess }) {
     setError('');
   };
 
-  const handleAllowedValuesInputChange = (value) => {
-    setAllowedValuesInput(value);
+  const handleValueInputChange = (value) => {
+    setCurrentValueInput(value);
   };
 
-  const handleAllowedValuesKeyDown = (e) => {
-    if (e.key === 'Enter' || e.key === ',') {
+  const handleValueInputKeyDown = (e) => {
+    if (e.key === 'Enter') {
       e.preventDefault();
-      if (!allowedValuesInput.trim()) {
-        return;
+      if (currentValueInput.trim()) {
+        handleAddValue();
       }
-      handleAddAllowedValue();
-    }
-
-    if (e.key === 'Backspace' && !allowedValuesInput && formData.allowed_values.length > 0) {
-      e.preventDefault();
-      setFormData(prev => ({
-        ...prev,
-        allowed_values: prev.allowed_values.slice(0, -1)
-      }));
     }
   };
 
-  const handleRemoveAllowedValue = (indexToRemove) => {
+  const handleRemoveValue = (indexToRemove) => {
     setFormData(prev => ({
       ...prev,
       allowed_values: prev.allowed_values.filter((_, index) => index !== indexToRemove)
     }));
   };
 
-  const handleAddAllowedValue = () => {
-    if (!allowedValuesInput.trim()) return;
-    addAllowedValue(allowedValuesInput);
-    setAllowedValuesInput('');
+  const handleAddValue = () => {
+    if (!currentValueInput.trim()) return;
+
+    const newValue = {
+      value_id: null, // Будет сгенерирован на бэкенде
+      value: currentValueInput.trim(),
+      linked_custom_fields: currentValueLinkedFields.map(linked => ({
+        linked_custom_field_id: linked.linked_custom_field_id,
+        linked_custom_field_key: linked.linked_custom_field_key,
+        linked_custom_field_label: linked.linked_custom_field_label,
+        linked_custom_field_values: linked.linked_custom_field_values.map(val => ({
+          linked_custom_field_value_id: val.linked_custom_field_value_id,
+          linked_custom_field_value: val.linked_custom_field_value
+        }))
+      }))
+    };
+
+    setFormData(prev => ({
+      ...prev,
+      allowed_values: [...prev.allowed_values, newValue]
+    }));
+
+    setCurrentValueInput('');
+    setCurrentValueLinkedFields([]);
+  };
+
+  const handleLinkFieldClick = () => {
+    // Исключаем текущее редактируемое поле из списка доступных для привязки
+    const availableFields = existingFields.filter(f => f.id !== editingFieldId);
+    if (availableFields.length === 0) {
+      alert('Нет доступных кастомных полей для привязки');
+      return;
+    }
+    setShowFieldDropdown(true);
+    setShowValueDropdown(false);
+    setSelectedFieldForLink(null);
+    setSelectedValueForLink(null);
+  };
+
+  const handleSelectFieldForLink = (field) => {
+    setSelectedFieldForLink(field);
+    setShowFieldDropdown(false);
+    setShowValueDropdown(true);
+  };
+
+  const handleSelectValueForLink = (valueObj) => {
+    if (!selectedFieldForLink) return;
+
+    // Проверяем, не добавлено ли уже это поле
+    const alreadyLinked = currentValueLinkedFields.find(
+      linked => linked.linked_custom_field_id === selectedFieldForLink.id
+    );
+
+    if (alreadyLinked) {
+      // Добавляем значение к существующей привязке
+      const updatedLinkedFields = currentValueLinkedFields.map(linked => {
+        if (linked.linked_custom_field_id === selectedFieldForLink.id) {
+          // Проверяем, не добавлено ли уже это значение
+          const valueExists = linked.linked_custom_field_values.find(
+            v => v.linked_custom_field_value_id === valueObj.value_id
+          );
+          if (!valueExists) {
+            return {
+              ...linked,
+              linked_custom_field_values: [
+                ...linked.linked_custom_field_values,
+                {
+                  linked_custom_field_value_id: valueObj.value_id,
+                  linked_custom_field_value: valueObj.value
+                }
+              ]
+            };
+          }
+        }
+        return linked;
+      });
+      setCurrentValueLinkedFields(updatedLinkedFields);
+    } else {
+      // Создаем новую привязку
+      const newLinkedField = {
+        linked_custom_field_id: selectedFieldForLink.id,
+        linked_custom_field_key: selectedFieldForLink.key,
+        linked_custom_field_label: selectedFieldForLink.label,
+        linked_custom_field_values: [{
+          linked_custom_field_value_id: valueObj.value_id,
+          linked_custom_field_value: valueObj.value
+        }]
+      };
+      setCurrentValueLinkedFields([...currentValueLinkedFields, newLinkedField]);
+    }
+
+    setShowValueDropdown(false);
+    setSelectedFieldForLink(null);
+    setSelectedValueForLink(null);
+  };
+
+  const handleRemoveLinkedField = (linkedFieldId) => {
+    setCurrentValueLinkedFields(prev =>
+      prev.filter(linked => linked.linked_custom_field_id !== linkedFieldId)
+    );
+  };
+
+  const handleRemoveLinkedValue = (linkedFieldId, valueId) => {
+    setCurrentValueLinkedFields(prev =>
+      prev.map(linked => {
+        if (linked.linked_custom_field_id === linkedFieldId) {
+          const updatedValues = linked.linked_custom_field_values.filter(
+            v => v.linked_custom_field_value_id !== valueId
+          );
+          if (updatedValues.length === 0) {
+            return null; // Удаляем всю привязку, если не осталось значений
+          }
+          return {
+            ...linked,
+            linked_custom_field_values: updatedValues
+          };
+        }
+        return linked;
+      }).filter(Boolean)
+    );
   };
 
   const handleSubmit = async (e) => {
@@ -133,19 +233,15 @@ function CustomFieldForm({ onClose, onSuccess }) {
     
     // При создании нормализуем ключ
     if (!editingFieldId) {
-      // Нормализуем ключ: приводим к нижнему регистру, заменяем пробелы на подчеркивания
       key = key.toLowerCase().replace(/\s+/g, '_');
-      // Удаляем все символы, кроме латинских букв, цифр и подчеркиваний
       key = key.replace(/[^a-z0-9_]/g, '');
       
-      // Проверяем, что ключ не пустой после нормализации
       if (!key) {
         setError('Ключ должен содержать хотя бы одну латинскую букву или цифру');
         setLoading(false);
         return;
       }
       
-      // Проверяем, что ключ не начинается с цифры
       if (/^\d/.test(key)) {
         setError('Ключ не может начинаться с цифры');
         setLoading(false);
@@ -156,18 +252,14 @@ function CustomFieldForm({ onClose, onSuccess }) {
     const payload = {
       key: key,
       label: formData.label.trim(),
-      // Тип поля всегда "enum" (список значений)
-      type: 'enum',
       allowed_values: formData.allowed_values
     };
 
     try {
       let response;
       if (editingFieldId) {
-        // Обновление существующего поля
         response = await axios.put(`${API_BASE}/custom-fields/${editingFieldId}`, payload);
       } else {
-        // Создание нового поля
         response = await axios.post(`${API_BASE}/custom-fields`, payload);
       }
       
@@ -177,7 +269,8 @@ function CustomFieldForm({ onClose, onSuccess }) {
         label: '',
         allowed_values: []
       });
-      setAllowedValuesInput('');
+      setCurrentValueInput('');
+      setCurrentValueLinkedFields([]);
       setEditingFieldId(null);
       
       // Перезагрузка списка полей
@@ -199,18 +292,35 @@ function CustomFieldForm({ onClose, onSuccess }) {
 
   const handleEdit = (field) => {
     setEditingFieldId(field.id);
+    
+    // Преобразуем данные из формата API в формат формы
+    const allowedValues = (field.allowed_values || []).map(val => {
+      // Если значение - строка (старый формат), преобразуем в новый
+      if (typeof val === 'string') {
+        return {
+          value_id: null,
+          value: val,
+          linked_custom_fields: []
+        };
+      }
+      // Если уже объект, используем как есть
+      return {
+        value_id: val.value_id || null,
+        value: val.value || String(val),
+        linked_custom_fields: val.linked_custom_fields || []
+      };
+    });
+    
     setFormData({
       key: field.key,
       label: field.label,
-      allowed_values: field.allowed_values || []
+      allowed_values: allowedValues
     });
     
-    // Очищаем ввод для нового значения списка
-    setAllowedValuesInput('');
-    
+    setCurrentValueInput('');
+    setCurrentValueLinkedFields([]);
     setError('');
     
-    // Прокручиваем к форме
     document.querySelector('.custom-field-form form')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   };
 
@@ -221,7 +331,8 @@ function CustomFieldForm({ onClose, onSuccess }) {
       label: '',
       allowed_values: []
     });
-    setAllowedValuesInput('');
+    setCurrentValueInput('');
+    setCurrentValueLinkedFields([]);
     setError('');
   };
 
@@ -235,7 +346,6 @@ function CustomFieldForm({ onClose, onSuccess }) {
       await axios.delete(`${API_BASE}/custom-fields/${fieldId}`);
       await reloadExistingFields();
       
-      // Если удаляемое поле редактировалось, сбрасываем форму
       if (editingFieldId === fieldId) {
         handleCancelEdit();
       }
@@ -249,6 +359,12 @@ function CustomFieldForm({ onClose, onSuccess }) {
       setDeletingFieldId(null);
     }
   };
+
+  // Получаем доступные поля для привязки (исключаем текущее редактируемое)
+  const availableFieldsForLink = existingFields.filter(f => f.id !== editingFieldId);
+
+  // Получаем значения выбранного поля для привязки
+  const selectedFieldValues = selectedFieldForLink?.allowed_values || [];
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -282,11 +398,6 @@ function CustomFieldForm({ onClose, onSuccess }) {
                       <div className="existing-field-main-info">
                         <span className="existing-field-label">{field.label}</span>
                         <span className="existing-field-key">{field.key}</span>
-                        <span className="existing-field-type">
-                          {field.type === 'string' && 'Текст'}
-                          {field.type === 'number' && 'Число'}
-                          {field.type === 'enum' && 'Список'}
-                        </span>
                       </div>
                       <div className="existing-field-actions">
                         <button
@@ -311,11 +422,35 @@ function CustomFieldForm({ onClose, onSuccess }) {
                       <div className="existing-field-allowed">
                         <span className="existing-field-allowed-title">Значения:</span>
                         <div className="values-list">
-                          {field.allowed_values.map((val, idx) => (
-                            <span key={idx} className="value-tag">
-                              {String(val)}
-                            </span>
-                          ))}
+                          {field.allowed_values.map((val, idx) => {
+                            // Поддержка нового формата (объект с value и linked_custom_fields) и старого (строка)
+                            const valueStr = typeof val === 'string' ? val : (val.value || String(val));
+                            
+                            // Собираем все привязанные значения в один массив
+                            const linkedValues = [];
+                            if (typeof val === 'object' && val.linked_custom_fields && val.linked_custom_fields.length > 0) {
+                              val.linked_custom_fields.forEach(linkedField => {
+                                linkedField.linked_custom_field_values.forEach(v => {
+                                  linkedValues.push(v.linked_custom_field_value);
+                                });
+                              });
+                            }
+                            
+                            return (
+                              <span key={idx} className="value-tag">
+                                <span className="value-tag-main">{valueStr}</span>
+                                {linkedValues.length > 0 && (
+                                  <span className="value-tag-linked-container">
+                                    {linkedValues.map((linkedVal, linkedIdx) => (
+                                      <span key={linkedIdx} className="value-tag-linked">
+                                        {linkedVal}
+                                      </span>
+                                    ))}
+                                  </span>
+                                )}
+                              </span>
+                            );
+                          })}
                         </div>
                       </div>
                     )}
@@ -326,15 +461,14 @@ function CustomFieldForm({ onClose, onSuccess }) {
           </div>
 
           <form onSubmit={handleSubmit}>
-          {/* Режим работы формы: создание или редактирование */}
-          <div className="form-mode-title">
-            {editingFieldId ? 'Режим редактирования' : 'Создать новое кастомное поле'}
-          </div>
-          {error && (
-            <div className="error-message">
-              {error}
+            <div className="form-mode-title">
+              {editingFieldId ? 'Режим редактирования' : 'Создать новое кастомное поле'}
             </div>
-          )}
+            {error && (
+              <div className="error-message">
+                {error}
+              </div>
+            )}
 
             <div className="form-field">
               <label>Ключ поля *</label>
@@ -367,29 +501,50 @@ function CustomFieldForm({ onClose, onSuccess }) {
 
             <div className="form-field">
               <label>Допустимые значения</label>
-              <small>Введите значение и нажмите Enter (или запятую), либо кнопку «Добавить» справа</small>
+              <small>Введите значение и нажмите Enter или кнопку «Добавить»</small>
               <div className="allowed-values-editor">
                 <div className="values-list">
-                  {formData.allowed_values.map((val, idx) => (
-                    <span key={idx} className="value-tag">
-                      {val}
-                      <button
-                        type="button"
-                        className="value-tag-remove"
-                        onClick={() => handleRemoveAllowedValue(idx)}
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
+                  {formData.allowed_values.map((valObj, idx) => {
+                    // Собираем все привязанные значения в один массив
+                    const linkedValues = [];
+                    if (valObj.linked_custom_fields && valObj.linked_custom_fields.length > 0) {
+                      valObj.linked_custom_fields.forEach(linkedField => {
+                        linkedField.linked_custom_field_values.forEach(val => {
+                          linkedValues.push(val.linked_custom_field_value);
+                        });
+                      });
+                    }
+                    
+                    return (
+                      <span key={idx} className="value-tag">
+                        <span className="value-tag-main">{valObj.value}</span>
+                        {linkedValues.length > 0 && (
+                          <span className="value-tag-linked-container">
+                            {linkedValues.map((linkedVal, linkedIdx) => (
+                              <span key={linkedIdx} className="value-tag-linked">
+                                {linkedVal}
+                              </span>
+                            ))}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          className="value-tag-remove"
+                          onClick={() => handleRemoveValue(idx)}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    );
+                  })}
                 </div>
                 <div className="allowed-values-input-wrapper">
                   <input
                     type="text"
                     className="allowed-values-input-inline"
-                    value={allowedValuesInput}
-                    onChange={(e) => handleAllowedValuesInputChange(e.target.value)}
-                    onKeyDown={handleAllowedValuesKeyDown}
+                    value={currentValueInput}
+                    onChange={(e) => handleValueInputChange(e.target.value)}
+                    onKeyDown={handleValueInputKeyDown}
                     placeholder={
                       formData.allowed_values.length === 0
                         ? 'например: Отдел управления продуктами'
@@ -398,13 +553,107 @@ function CustomFieldForm({ onClose, onSuccess }) {
                   />
                   <button
                     type="button"
+                    className="btn btn-small btn-link"
+                    onClick={handleLinkFieldClick}
+                    disabled={!currentValueInput.trim()}
+                    title="Привязать кастомное поле"
+                  >
+                    Связать
+                  </button>
+                  <button
+                    type="button"
                     className="btn btn-small btn-add-allowed"
-                    onClick={handleAddAllowedValue}
-                    disabled={!allowedValuesInput.trim()}
+                    onClick={handleAddValue}
+                    disabled={!currentValueInput.trim()}
                   >
                     Добавить
                   </button>
                 </div>
+                
+                {/* Выпадающий список полей для привязки */}
+                {showFieldDropdown && (
+                  <div className="dropdown-container">
+                    <div className="dropdown-overlay" onClick={() => setShowFieldDropdown(false)}></div>
+                    <div className="dropdown-menu">
+                      <div className="dropdown-header">Выберите кастомное поле:</div>
+                      {availableFieldsForLink.length === 0 ? (
+                        <div className="dropdown-item">Нет доступных полей</div>
+                      ) : (
+                        availableFieldsForLink.map(field => (
+                          <div
+                            key={field.id}
+                            className="dropdown-item"
+                            onClick={() => handleSelectFieldForLink(field)}
+                          >
+                            {field.label} ({field.key})
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Выпадающий список значений для привязки */}
+                {showValueDropdown && selectedFieldForLink && (
+                  <div className="dropdown-container">
+                    <div className="dropdown-overlay" onClick={() => setShowValueDropdown(false)}></div>
+                    <div className="dropdown-menu">
+                      <div className="dropdown-header">Выберите значение поля "{selectedFieldForLink.label}":</div>
+                      {selectedFieldValues.length === 0 ? (
+                        <div className="dropdown-item">Нет доступных значений</div>
+                      ) : (
+                        selectedFieldValues.map((valueObj, idx) => {
+                          const valueStr = typeof valueObj === 'string' ? valueObj : (valueObj.value || String(valueObj));
+                          const valueId = typeof valueObj === 'string' ? null : (valueObj.value_id || null);
+                          return (
+                            <div
+                              key={idx}
+                              className="dropdown-item"
+                              onClick={() => handleSelectValueForLink({ value: valueStr, value_id: valueId })}
+                            >
+                              {valueStr}
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Отображение привязанных полей для текущего значения */}
+                {currentValueLinkedFields.length > 0 && (
+                  <div className="current-linked-fields">
+                    <div className="current-linked-fields-title">Привязанные поля:</div>
+                    {currentValueLinkedFields.map((linkedField, idx) => (
+                      <div key={idx} className="current-linked-field-item">
+                        <div className="current-linked-field-header">
+                          <span className="current-linked-field-label">{linkedField.linked_custom_field_label}</span>
+                          <button
+                            type="button"
+                            className="btn-link-remove"
+                            onClick={() => handleRemoveLinkedField(linkedField.linked_custom_field_id)}
+                          >
+                            ×
+                          </button>
+                        </div>
+                        <div className="current-linked-values">
+                          {linkedField.linked_custom_field_values.map((val, valIdx) => (
+                            <span key={valIdx} className="current-linked-value-tag">
+                              {val.linked_custom_field_value}
+                              <button
+                                type="button"
+                                className="current-linked-value-remove"
+                                onClick={() => handleRemoveLinkedValue(linkedField.linked_custom_field_id, val.linked_custom_field_value_id)}
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -436,4 +685,3 @@ function CustomFieldForm({ onClose, onSuccess }) {
 }
 
 export default CustomFieldForm;
-

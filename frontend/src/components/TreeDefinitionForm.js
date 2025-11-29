@@ -182,7 +182,10 @@ function TreeDefinitionForm({ onClose, onChanged }) {
           return null;
         }
         const values = Array.isArray(field.allowed_values)
-          ? field.allowed_values.map(v => String(v))
+          ? field.allowed_values.map(v => {
+              // Поддержка нового формата (объект с value) и старого (строка)
+              return typeof v === 'string' ? v : (v.value || String(v));
+            })
           : [];
         return {
           key: field.key,

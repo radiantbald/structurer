@@ -43,18 +43,56 @@ function PositionCustomFieldsModal({
                       {isEnum ? (
                         <select
                           value={value || ''}
-                          onChange={(e) => onChangeValue(key, e.target.value)}
+                          onChange={(e) => {
+                            const selectedValue = e.target.value;
+                            onChangeValue(key, selectedValue);
+                            
+                            // Если выбрано значение с привязанными полями, автоматически добавляем их
+                            if (selectedValue) {
+                              const selectedValObj = fieldDef.allowed_values.find(v => {
+                                const valStr = typeof v === 'string' ? v : (v.value || String(v));
+                                return valStr === selectedValue;
+                              });
+                              
+                              if (selectedValObj && typeof selectedValObj === 'object' && selectedValObj.linked_custom_fields) {
+                                // Автоматически добавляем привязанные значения
+                                selectedValObj.linked_custom_fields.forEach(linkedField => {
+                                  linkedField.linked_custom_field_values.forEach(linkedVal => {
+                                    // Добавляем привязанное значение только если оно еще не установлено
+                                    const linkedKey = linkedField.linked_custom_field_key;
+                                    if (!customFieldsValues[linkedKey]) {
+                                      onChangeValue(linkedKey, linkedVal.linked_custom_field_value);
+                                    }
+                                  });
+                                });
+                              }
+                            }
+                          }}
                         >
                           <option value="">Выберите значение...</option>
-                          {fieldDef.allowed_values.map((val, idx) => (
-                            <option key={idx} value={String(val)}>
-                              {String(val)}
-                            </option>
-                          ))}
+                          {fieldDef.allowed_values.map((val, idx) => {
+                            // Поддержка нового формата (объект с value) и старого (строка)
+                            const valueStr = typeof val === 'string' ? val : (val.value || String(val));
+                            const hasLinked = typeof val === 'object' && val.linked_custom_fields && val.linked_custom_fields.length > 0;
+                            // Собираем все привязанные значения в один массив
+                            const linkedValues = hasLinked 
+                              ? val.linked_custom_fields.flatMap(lf => 
+                                  lf.linked_custom_field_values.map(lv => lv.linked_custom_field_value)
+                                )
+                              : [];
+                            const linkedInfo = linkedValues.length > 0 
+                              ? ` (${linkedValues.join(', ')})`
+                              : '';
+                            return (
+                              <option key={idx} value={valueStr}>
+                                {valueStr}{linkedInfo}
+                              </option>
+                            );
+                          })}
                         </select>
                       ) : (
                         <input
-                          type={fieldDef?.type === 'number' ? 'number' : 'text'}
+                          type="text"
                           value={value || ''}
                           onChange={(e) => onChangeValue(key, e.target.value)}
                         />

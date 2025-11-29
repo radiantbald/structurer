@@ -358,7 +358,7 @@ func (h *Handler) DeletePosition(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetCustomFields(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.Query(
-		`SELECT id, key, label, type, allowed_values, created_at, updated_at
+		`SELECT id, key, label, allowed_values, created_at, updated_at
 		FROM custom_field_definitions ORDER BY label`,
 	)
 	if err != nil {
@@ -371,7 +371,7 @@ func (h *Handler) GetCustomFields(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var f CustomFieldDefinition
 		var allowedValuesJSON []byte
-		err := rows.Scan(&f.ID, &f.Key, &f.Label, &f.Type, &allowedValuesJSON,
+		err := rows.Scan(&f.ID, &f.Key, &f.Label, &allowedValuesJSON,
 			&f.CreatedAt, &f.UpdatedAt)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -397,15 +397,34 @@ func (h *Handler) CreateCustomField(w http.ResponseWriter, r *http.Request) {
 	}
 
 	f.ID = uuid.New()
+	
+	// Generate value_id for each allowed value if not present
+	if f.AllowedValues != nil {
+		for i := range *f.AllowedValues {
+			if (*f.AllowedValues)[i].ValueID == uuid.Nil {
+				(*f.AllowedValues)[i].ValueID = uuid.New()
+			}
+			// Generate value_id for linked custom field values if not present
+			for j := range (*f.AllowedValues)[i].LinkedCustomFields {
+				for k := range (*f.AllowedValues)[i].LinkedCustomFields[j].LinkedCustomFieldValues {
+					if (*f.AllowedValues)[i].LinkedCustomFields[j].LinkedCustomFieldValues[k].LinkedCustomFieldValueID == uuid.Nil {
+						(*f.AllowedValues)[i].LinkedCustomFields[j].LinkedCustomFieldValues[k].LinkedCustomFieldValueID = uuid.New()
+					}
+				}
+			}
+		}
+	}
+	
 	var allowedValuesJSON []byte
 	if f.AllowedValues != nil {
 		allowedValuesJSON, _ = json.Marshal(*f.AllowedValues)
 	}
 
+	// Type is always 'enum' now, but we keep it for backward compatibility with DB
 	_, err := h.db.Exec(
 		`INSERT INTO custom_field_definitions (id, key, label, type, allowed_values, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())`,
-		f.ID, f.Key, f.Label, f.Type, allowedValuesJSON,
+		VALUES ($1, $2, $3, 'enum', $4, NOW(), NOW())`,
+		f.ID, f.Key, f.Label, allowedValuesJSON,
 	)
 
 	if err != nil {
@@ -436,15 +455,33 @@ func (h *Handler) UpdateCustomField(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Generate value_id for each allowed value if not present
+	if f.AllowedValues != nil {
+		for i := range *f.AllowedValues {
+			if (*f.AllowedValues)[i].ValueID == uuid.Nil {
+				(*f.AllowedValues)[i].ValueID = uuid.New()
+			}
+			// Generate value_id for linked custom field values if not present
+			for j := range (*f.AllowedValues)[i].LinkedCustomFields {
+				for k := range (*f.AllowedValues)[i].LinkedCustomFields[j].LinkedCustomFieldValues {
+					if (*f.AllowedValues)[i].LinkedCustomFields[j].LinkedCustomFieldValues[k].LinkedCustomFieldValueID == uuid.Nil {
+						(*f.AllowedValues)[i].LinkedCustomFields[j].LinkedCustomFieldValues[k].LinkedCustomFieldValueID = uuid.New()
+					}
+				}
+			}
+		}
+	}
+
 	var allowedValuesJSON []byte
 	if f.AllowedValues != nil {
 		allowedValuesJSON, _ = json.Marshal(*f.AllowedValues)
 	}
 
+	// Type is always 'enum' now, but we keep it for backward compatibility with DB
 	_, err = h.db.Exec(
-		`UPDATE custom_field_definitions SET label = $1, type = $2, allowed_values = $3, 
-		updated_at = NOW() WHERE id = $4`,
-		f.Label, f.Type, allowedValuesJSON, id,
+		`UPDATE custom_field_definitions SET label = $1, type = 'enum', allowed_values = $2, 
+		updated_at = NOW() WHERE id = $3`,
+		f.Label, allowedValuesJSON, id,
 	)
 
 	if err != nil {
