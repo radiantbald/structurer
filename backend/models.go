@@ -111,6 +111,14 @@ type TreeNode struct {
 	Children        []TreeNode `json:"children"`
 }
 
+// PositionCustomFieldValue represents a custom field value in position response
+type PositionCustomFieldValue struct {
+	CustomFieldKey    string                     `json:"custom_field_key,omitempty"`
+	ValueID           string                     `json:"value_id"`
+	Value             string                     `json:"value"`
+	LinkedCustomFields []LinkedCustomField       `json:"linked_custom_fields,omitempty"`
+}
+
 // JSONB is a helper type for JSONB columns
 type JSONB map[string]interface{}
 

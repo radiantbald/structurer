@@ -6,6 +6,7 @@ import pencilIcon from '../assets/images/pencil.png';
 function PositionForm({
   position,
   customFields,
+  customFieldsArray,
   isEditing,
   onEdit,
   onCancel,
@@ -283,10 +284,38 @@ function PositionForm({
                 const fieldDef = Array.isArray(availableCustomFields)
                   ? availableCustomFields.find(f => f.key === key)
                   : null;
+                
+                // Build display value with linked values separated by dashes
+                let displayValue = String(value);
+                
+                // If we have the array format, find linked values for this field
+                if (Array.isArray(customFieldsArray)) {
+                  const fieldItem = customFieldsArray.find(item => item.custom_field_key === key);
+                  if (fieldItem) {
+                    // Use the value from array format
+                    displayValue = fieldItem.value || String(value);
+                    
+                    // Add linked values if they exist
+                    if (fieldItem.linked_custom_fields && Array.isArray(fieldItem.linked_custom_fields)) {
+                      const linkedValues = [];
+                      fieldItem.linked_custom_fields.forEach(linkedField => {
+                        if (linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
+                          linkedField.linked_custom_field_values.forEach(linkedVal => {
+                            linkedValues.push(linkedVal.linked_custom_field_value);
+                          });
+                        }
+                      });
+                      if (linkedValues.length > 0) {
+                        displayValue = `${displayValue} - ${linkedValues.join(' - ')}`;
+                      }
+                    }
+                  }
+                }
+                
                 return (
                   <span key={key} className="custom-field-chip">
                     <span className="custom-field-chip-label">{fieldDef ? fieldDef.label : key}:</span>
-                    <span className="custom-field-chip-value">{String(value)}</span>
+                    <span className="custom-field-chip-value">{displayValue}</span>
                   </span>
                 );
               })}
@@ -397,10 +426,38 @@ function PositionForm({
               const fieldDef = Array.isArray(availableCustomFields)
                 ? availableCustomFields.find(f => f.key === key)
                 : null;
+              
+              // Build display value with linked values separated by dashes
+              let displayValue = String(value);
+              
+              // If we have the array format, find linked values for this field
+              if (Array.isArray(customFieldsArray)) {
+                const fieldItem = customFieldsArray.find(item => item.custom_field_key === key);
+                if (fieldItem) {
+                  // Use the value from array format
+                  displayValue = fieldItem.value || String(value);
+                  
+                  // Add linked values if they exist
+                  if (fieldItem.linked_custom_fields && Array.isArray(fieldItem.linked_custom_fields)) {
+                    const linkedValues = [];
+                    fieldItem.linked_custom_fields.forEach(linkedField => {
+                      if (linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
+                        linkedField.linked_custom_field_values.forEach(linkedVal => {
+                          linkedValues.push(linkedVal.linked_custom_field_value);
+                        });
+                      }
+                    });
+                    if (linkedValues.length > 0) {
+                      displayValue = `${displayValue} - ${linkedValues.join(' - ')}`;
+                    }
+                  }
+                }
+              }
+              
               return (
                 <span key={key} className="custom-field-chip">
                   <span className="custom-field-chip-label">{fieldDef ? fieldDef.label : key}:</span>
-                  <span className="custom-field-chip-value">{String(value)}</span>
+                  <span className="custom-field-chip-value">{displayValue}</span>
                 </span>
               );
             })}

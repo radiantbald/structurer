@@ -269,10 +269,13 @@ func (h *Handler) GetPosition(w http.ResponseWriter, r *http.Request) {
 		json.Unmarshal(customFieldsJSON, &p.CustomFields)
 	}
 
-	// Fetch all custom field definitions
+	// Build custom_fields array with linked fields
+	customFieldsArray := []PositionCustomFieldValue{}
+
+	// Load all custom field definitions
 	rows, err := h.db.Query(
 		`SELECT id, key, label, allowed_values, created_at, updated_at
-		FROM custom_field_definitions ORDER BY label`,
+		FROM custom_field_definitions`,
 	)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -280,7 +283,8 @@ func (h *Handler) GetPosition(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var customFields []CustomFieldDefinition
+	// Build a map of custom field definitions by key
+	fieldDefsByKey := make(map[string]CustomFieldDefinition)
 	for rows.Next() {
 		var f CustomFieldDefinition
 		var allowedValuesJSON []byte
@@ -294,22 +298,113 @@ func (h *Handler) GetPosition(w http.ResponseWriter, r *http.Request) {
 			var arr AllowedValuesArray
 			json.Unmarshal(allowedValuesJSON, &arr)
 			f.AllowedValues = &arr
-		} else {
-			// Ensure allowed_values is always an array, not null
-			emptyArr := AllowedValuesArray{}
-			f.AllowedValues = &emptyArr
 		}
-		customFields = append(customFields, f)
+		fieldDefsByKey[f.Key] = f
 	}
 
-	// Build response with custom_fields as array of definitions
-	// and custom_fields_values as the actual values stored in the position
+	// Process each custom field in the position
+	if p.CustomFields != nil {
+		for fieldKey, storedValue := range p.CustomFields {
+			fieldDef, exists := fieldDefsByKey[fieldKey]
+			if !exists {
+				// Field definition not found, skip or add as-is
+				continue
+			}
+
+			if fieldDef.AllowedValues == nil || len(*fieldDef.AllowedValues) == 0 {
+				// No allowed values, treat as string field
+				valueStr := ""
+				if v, ok := storedValue.(string); ok {
+					valueStr = v
+				} else {
+					valueStr = ""
+				}
+				customFieldsArray = append(customFieldsArray, PositionCustomFieldValue{
+					CustomFieldKey: fieldKey,
+					ValueID:        "",
+					Value:          valueStr,
+				})
+				continue
+			}
+
+			// Find matching value in allowed values
+			storedValueStr := ""
+			if v, ok := storedValue.(string); ok {
+				storedValueStr = v
+			}
+
+			var matchedValue *AllowedValue
+			for i := range *fieldDef.AllowedValues {
+				allowedVal := &(*fieldDef.AllowedValues)[i]
+				// Match by value_id (UUID string) or by value text
+				valueIDStr := allowedVal.ValueID.String()
+				if storedValueStr == valueIDStr || storedValueStr == allowedVal.Value {
+					matchedValue = allowedVal
+					break
+				}
+			}
+
+			if matchedValue != nil {
+				// Build linked custom fields structure
+				linkedFields := []LinkedCustomField{}
+				if len(matchedValue.LinkedCustomFields) > 0 {
+					// Get values from position for linked fields
+					for _, linkedDef := range matchedValue.LinkedCustomFields {
+						linkedFieldKey := linkedDef.LinkedCustomFieldKey
+						linkedStoredValue, linkedExists := p.CustomFields[linkedFieldKey]
+
+						if linkedExists {
+							// Find matching linked values
+							linkedValues := []LinkedCustomFieldValue{}
+							linkedStoredValueStr := ""
+							if v, ok := linkedStoredValue.(string); ok {
+								linkedStoredValueStr = v
+							}
+
+							for _, linkedValueDef := range linkedDef.LinkedCustomFieldValues {
+								linkedValueIDStr := linkedValueDef.LinkedCustomFieldValueID.String()
+								if linkedStoredValueStr == linkedValueIDStr || linkedStoredValueStr == linkedValueDef.LinkedCustomFieldValue {
+									linkedValues = append(linkedValues, linkedValueDef)
+								}
+							}
+
+							if len(linkedValues) > 0 {
+								linkedFields = append(linkedFields, LinkedCustomField{
+									LinkedCustomFieldID:     linkedDef.LinkedCustomFieldID,
+									LinkedCustomFieldKey:    linkedDef.LinkedCustomFieldKey,
+									LinkedCustomFieldLabel:  linkedDef.LinkedCustomFieldLabel,
+									LinkedCustomFieldValues: linkedValues,
+								})
+							}
+						}
+					}
+				}
+
+				valueItem := PositionCustomFieldValue{
+					CustomFieldKey: fieldKey,
+					ValueID:        matchedValue.ValueID.String(),
+					Value:          matchedValue.Value,
+				}
+				if len(linkedFields) > 0 {
+					valueItem.LinkedCustomFields = linkedFields
+				}
+				customFieldsArray = append(customFieldsArray, valueItem)
+			} else {
+				// Value not found in allowed values, add as-is
+				customFieldsArray = append(customFieldsArray, PositionCustomFieldValue{
+					CustomFieldKey: fieldKey,
+					ValueID:        "",
+					Value:          storedValueStr,
+				})
+			}
+		}
+	}
+
 	response := map[string]interface{}{
 		"id":                   p.ID,
 		"name":                 p.Name,
 		"description":          p.Description,
-		"custom_fields":        customFields,
-		"custom_fields_values": p.CustomFields, // Actual values stored in DB
+		"custom_fields":        customFieldsArray,
 		"employee_full_name":   p.EmployeeFullName,
 		"employee_external_id": p.EmployeeExternalID,
 		"employee_profile_url": p.EmployeeProfileURL,
@@ -550,7 +645,7 @@ func (h *Handler) DeleteCustomField(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if field is used in any tree
+	// Get field key before deletion
 	var fieldKey string
 	err = h.db.QueryRow(
 		"SELECT key FROM custom_field_definitions WHERE id = $1",
@@ -566,25 +661,89 @@ func (h *Handler) DeleteCustomField(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var count int
-	err = h.db.QueryRow(
-		`SELECT COUNT(*) FROM tree_definitions 
-		WHERE levels::text LIKE '%' || $1 || '%'`,
-		fieldKey,
-	).Scan(&count)
+	// Start transaction to ensure atomicity
+	tx, err := h.db.Begin()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
 
+	// Remove the custom field key from all positions' custom_fields JSONB
+	_, err = tx.Exec(
+		`UPDATE positions 
+		SET custom_fields = custom_fields - $1, updated_at = NOW()
+		WHERE custom_fields ? $1`,
+		fieldKey,
+	)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	if count > 0 {
-		http.Error(w, "Cannot delete field: it is used in tree definitions", http.StatusConflict)
+	// Remove levels from tree_definitions that use this custom field
+	// We need to filter out levels where custom_field_key matches the deleted field
+	rows, err := tx.Query(
+		`SELECT id, levels FROM tree_definitions 
+		WHERE levels::text LIKE '%' || $1 || '%'`,
+		fieldKey,
+	)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var treeID uuid.UUID
+		var levelsJSON []byte
+		if err := rows.Scan(&treeID, &levelsJSON); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Parse levels JSON
+		var levels []TreeLevel
+		if err := json.Unmarshal(levelsJSON, &levels); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Filter out levels that use the deleted field
+		var filteredLevels []TreeLevel
+		for _, level := range levels {
+			if level.CustomFieldKey != fieldKey {
+				filteredLevels = append(filteredLevels, level)
+			}
+		}
+
+		// Update tree with filtered levels
+		filteredLevelsJSON, _ := json.Marshal(filteredLevels)
+		_, err = tx.Exec(
+			`UPDATE tree_definitions 
+			SET levels = $1, updated_at = NOW() 
+			WHERE id = $2`,
+			filteredLevelsJSON, treeID,
+		)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	if err = rows.Err(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	_, err = h.db.Exec("DELETE FROM custom_field_definitions WHERE id = $1", id)
+	// Delete the custom field definition
+	_, err = tx.Exec("DELETE FROM custom_field_definitions WHERE id = $1", id)
 	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Commit transaction
+	if err = tx.Commit(); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

@@ -36,8 +36,10 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
 
   useEffect(() => {
     // Load custom fields definitions on mount (needed for new positions)
-    // If loading from position, definitions will be updated from there
-    loadCustomFields();
+    // Note: loadPosition will also call loadCustomFields, but we need it here for new positions
+    if (!positionId) {
+      loadCustomFields();
+    }
   }, []);
 
   const loadPosition = async (id) => {
@@ -46,22 +48,58 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
       const response = await axios.get(`${API_BASE}/positions/${id}`);
       const positionData = response.data;
       
-      // Extract custom_fields definitions from API response (now it's an array of definitions)
+      // Load custom field definitions first (needed for conversion)
+      await loadCustomFields();
+      
+      // Store original array format for display purposes
+      const originalCustomFieldsArray = Array.isArray(positionData.custom_fields) 
+        ? positionData.custom_fields 
+        : null;
+      
+      // Convert custom_fields array format to object format for PositionForm
+      // API returns array with structure: [{custom_field_key, value_id, value, linked_custom_fields}]
+      // PositionForm expects object format: {field_key: value}
       if (Array.isArray(positionData.custom_fields)) {
-        // Save definitions to customFields state
-        setCustomFields(positionData.custom_fields);
-        
-        // Replace custom_fields in positionData with actual values from custom_fields_values
-        if (positionData.custom_fields_values) {
-          positionData.custom_fields = positionData.custom_fields_values;
-        } else {
-          // If no values provided, use empty object
-          positionData.custom_fields = {};
-        }
-      } else {
-        // Backward compatibility: if custom_fields is not an array, it's values (old format)
-        // Load definitions separately
-        loadCustomFields();
+        const customFieldsObj = {};
+        positionData.custom_fields.forEach((item) => {
+          // Use custom_field_key if available, otherwise try to match by value
+          const fieldKey = item.custom_field_key;
+          
+          if (fieldKey) {
+            // Store value_id or value string
+            customFieldsObj[fieldKey] = item.value_id || item.value;
+            
+            // Store linked values if they exist
+            if (item.linked_custom_fields && Array.isArray(item.linked_custom_fields)) {
+              item.linked_custom_fields.forEach(linkedField => {
+                if (linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
+                  linkedField.linked_custom_field_values.forEach(linkedVal => {
+                    customFieldsObj[linkedField.linked_custom_field_key] = linkedVal.linked_custom_field_value_id || linkedVal.linked_custom_field_value;
+                  });
+                }
+              });
+            }
+          } else {
+            // Fallback: try to find field by matching value in allowed_values
+            const fieldDef = customFields.find(f => {
+              if (!f.allowed_values || !Array.isArray(f.allowed_values)) return false;
+              return f.allowed_values.some(av => {
+                const val = typeof av === 'string' ? av : (av.value || '');
+                const valId = typeof av === 'object' && av.value_id ? av.value_id : '';
+                return valId === item.value_id || val === item.value || val === item.value_id;
+              });
+            });
+            
+            if (fieldDef) {
+              customFieldsObj[fieldDef.key] = item.value_id || item.value;
+            }
+          }
+        });
+        positionData.custom_fields = customFieldsObj;
+        // Store original array format for display
+        positionData.custom_fields_array = originalCustomFieldsArray;
+      } else if (!positionData.custom_fields || typeof positionData.custom_fields !== 'object') {
+        positionData.custom_fields = {};
       }
       
       setPosition(positionData);
@@ -164,6 +202,7 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
       <PositionForm
         position={position}
         customFields={customFields}
+        customFieldsArray={position?.custom_fields_array}
         isEditing={isEditing}
         onEdit={handleEdit}
         onCancel={handleCancel}
