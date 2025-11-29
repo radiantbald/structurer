@@ -35,6 +35,8 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
   }, [positionId, initialPath]);
 
   useEffect(() => {
+    // Load custom fields definitions on mount (needed for new positions)
+    // If loading from position, definitions will be updated from there
     loadCustomFields();
   }, []);
 
@@ -42,7 +44,27 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
     setLoading(true);
     try {
       const response = await axios.get(`${API_BASE}/positions/${id}`);
-      setPosition(response.data);
+      const positionData = response.data;
+      
+      // Extract custom_fields definitions from API response (now it's an array of definitions)
+      if (Array.isArray(positionData.custom_fields)) {
+        // Save definitions to customFields state
+        setCustomFields(positionData.custom_fields);
+        
+        // Replace custom_fields in positionData with actual values from custom_fields_values
+        if (positionData.custom_fields_values) {
+          positionData.custom_fields = positionData.custom_fields_values;
+        } else {
+          // If no values provided, use empty object
+          positionData.custom_fields = {};
+        }
+      } else {
+        // Backward compatibility: if custom_fields is not an array, it's values (old format)
+        // Load definitions separately
+        loadCustomFields();
+      }
+      
+      setPosition(positionData);
     } catch (error) {
       console.error('Failed to load position:', error);
     } finally {

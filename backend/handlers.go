@@ -49,13 +49,13 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 		searchLower := strings.ToLower(search)
 		hasAnd := strings.Contains(searchLower, " and ")
 		hasOr := strings.Contains(searchLower, " or ")
-		
+
 		if hasAnd || hasOr {
 			// Advanced search with AND/OR
 			var conditions []string
 			var queryArgs []interface{}
 			argIndex := 1
-			
+
 			// Split by AND first (higher priority)
 			var parts []string
 			if hasAnd {
@@ -66,7 +66,7 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 			} else {
 				parts = []string{search}
 			}
-			
+
 			// Process each part (which may contain OR)
 			for _, part := range parts {
 				if strings.Contains(strings.ToLower(part), " or ") {
@@ -75,7 +75,7 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 					for _, orPart := range orParts {
 						orPart = strings.TrimSpace(orPart)
 						if orPart != "" {
-							orConditions = append(orConditions, 
+							orConditions = append(orConditions,
 								`(name ILIKE $`+strconv.Itoa(argIndex)+` OR 
 								COALESCE(description, '') ILIKE $`+strconv.Itoa(argIndex)+` OR 
 								COALESCE(employee_full_name, '') ILIKE $`+strconv.Itoa(argIndex)+` OR
@@ -89,7 +89,7 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 					}
 				} else {
 					if part != "" {
-						conditions = append(conditions, 
+						conditions = append(conditions,
 							`(name ILIKE $`+strconv.Itoa(argIndex)+` OR 
 							COALESCE(description, '') ILIKE $`+strconv.Itoa(argIndex)+` OR 
 							COALESCE(employee_full_name, '') ILIKE $`+strconv.Itoa(argIndex)+` OR
@@ -99,7 +99,7 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-			
+
 			if len(conditions) > 0 {
 				whereClause := strings.Join(conditions, " AND ")
 				query = `SELECT id, name, description, custom_fields, employee_full_name, 
@@ -162,12 +162,12 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 		searchLower := strings.ToLower(search)
 		hasAnd := strings.Contains(searchLower, " and ")
 		hasOr := strings.Contains(searchLower, " or ")
-		
+
 		if hasAnd || hasOr {
 			var conditions []string
 			var countArgs []interface{}
 			argIndex := 1
-			
+
 			var parts []string
 			if hasAnd {
 				parts = strings.Split(search, " AND ")
@@ -177,7 +177,7 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 			} else {
 				parts = []string{search}
 			}
-			
+
 			for _, part := range parts {
 				if strings.Contains(strings.ToLower(part), " or ") {
 					orParts := strings.Split(part, " OR ")
@@ -185,7 +185,7 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 					for _, orPart := range orParts {
 						orPart = strings.TrimSpace(orPart)
 						if orPart != "" {
-							orConditions = append(orConditions, 
+							orConditions = append(orConditions,
 								`(name ILIKE $`+strconv.Itoa(argIndex)+` OR 
 								COALESCE(description, '') ILIKE $`+strconv.Itoa(argIndex)+` OR 
 								COALESCE(employee_full_name, '') ILIKE $`+strconv.Itoa(argIndex)+` OR
@@ -199,7 +199,7 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 					}
 				} else {
 					if part != "" {
-						conditions = append(conditions, 
+						conditions = append(conditions,
 							`(name ILIKE $`+strconv.Itoa(argIndex)+` OR 
 							COALESCE(description, '') ILIKE $`+strconv.Itoa(argIndex)+` OR 
 							COALESCE(employee_full_name, '') ILIKE $`+strconv.Itoa(argIndex)+` OR
@@ -209,7 +209,7 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-			
+
 			if len(conditions) > 0 {
 				countQuery = "SELECT COUNT(*) FROM positions WHERE " + strings.Join(conditions, " AND ")
 				h.db.QueryRow(countQuery, countArgs...).Scan(&total)
@@ -269,8 +269,56 @@ func (h *Handler) GetPosition(w http.ResponseWriter, r *http.Request) {
 		json.Unmarshal(customFieldsJSON, &p.CustomFields)
 	}
 
+	// Fetch all custom field definitions
+	rows, err := h.db.Query(
+		`SELECT id, key, label, allowed_values, created_at, updated_at
+		FROM custom_field_definitions ORDER BY label`,
+	)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var customFields []CustomFieldDefinition
+	for rows.Next() {
+		var f CustomFieldDefinition
+		var allowedValuesJSON []byte
+		err := rows.Scan(&f.ID, &f.Key, &f.Label, &allowedValuesJSON,
+			&f.CreatedAt, &f.UpdatedAt)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if allowedValuesJSON != nil {
+			var arr AllowedValuesArray
+			json.Unmarshal(allowedValuesJSON, &arr)
+			f.AllowedValues = &arr
+		} else {
+			// Ensure allowed_values is always an array, not null
+			emptyArr := AllowedValuesArray{}
+			f.AllowedValues = &emptyArr
+		}
+		customFields = append(customFields, f)
+	}
+
+	// Build response with custom_fields as array of definitions
+	// and custom_fields_values as the actual values stored in the position
+	response := map[string]interface{}{
+		"id":                   p.ID,
+		"name":                 p.Name,
+		"description":          p.Description,
+		"custom_fields":        customFields,
+		"custom_fields_values": p.CustomFields, // Actual values stored in DB
+		"employee_full_name":   p.EmployeeFullName,
+		"employee_external_id": p.EmployeeExternalID,
+		"employee_profile_url": p.EmployeeProfileURL,
+		"created_at":           p.CreatedAt,
+		"updated_at":           p.UpdatedAt,
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(p)
+	json.NewEncoder(w).Encode(response)
 }
 
 func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
@@ -397,7 +445,7 @@ func (h *Handler) CreateCustomField(w http.ResponseWriter, r *http.Request) {
 	}
 
 	f.ID = uuid.New()
-	
+
 	// Generate value_id for each allowed value if not present
 	if f.AllowedValues != nil {
 		for i := range *f.AllowedValues {
@@ -414,7 +462,7 @@ func (h *Handler) CreateCustomField(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	
+
 	var allowedValuesJSON []byte
 	if f.AllowedValues != nil {
 		allowedValuesJSON, _ = json.Marshal(*f.AllowedValues)
@@ -754,4 +802,3 @@ func (h *Handler) GetTreeStructure(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(structure)
 }
-
