@@ -118,8 +118,17 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 		}
 	}
 
+	// Load custom field definitions to check for linked fields
+	fieldDefsByKey := loadCustomFieldDefinitions(db)
+
+	// Create a map of tree level field keys for quick lookup
+	treeLevelFieldKeys := make(map[string]bool)
+	for _, level := range tree.Levels {
+		treeLevelFieldKeys[level.CustomFieldKey] = true
+	}
+
 	// Build structured part of the tree recursively на основе только структурированных позиций.
-	structuredChildren := buildTreeLevel(structuredPositions, tree.Levels, 0, nil)
+	structuredChildren := buildTreeLevel(structuredPositions, tree.Levels, 0, nil, fieldDefsByKey, treeLevelFieldKeys)
 
 	// Collect positions that don't participate in the tree at all (no values for any tree level keys)
 	unstructuredPositions := make([]struct {
@@ -154,11 +163,11 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 		label := "Вне структуры"
 		// field_key is intentionally nil so that frontend won't add any path constraints
 		unstructuredGroup := TreeNode{
-			Type:       "field_value",
-			LevelOrder: nil,
-			FieldKey:   nil,
-			FieldValue: &label,
-			Children:   unstructuredNodes,
+			Type:            "custom_field_value",
+			LevelOrder:      nil,
+			CustomFieldKey:  nil,
+			CustomFieldValue: &label,
+			Children:        unstructuredNodes,
 		}
 
 		structuredChildren = append(structuredChildren, unstructuredGroup)
@@ -189,12 +198,51 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 	return structure
 }
 
+func loadCustomFieldDefinitions(db *sql.DB) map[string]CustomFieldDefinition {
+	fieldDefsByKey := make(map[string]CustomFieldDefinition)
+	rows, err := db.Query(
+		`SELECT id, key, label, allowed_values, created_at, updated_at
+		FROM custom_field_definitions`,
+	)
+	if err != nil {
+		return fieldDefsByKey
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var f CustomFieldDefinition
+		var allowedValuesJSON []byte
+		if err := rows.Scan(&f.ID, &f.Key, &f.Label, &allowedValuesJSON,
+			&f.CreatedAt, &f.UpdatedAt); err == nil {
+			if allowedValuesJSON != nil {
+				var arr AllowedValuesArray
+				if err := json.Unmarshal(allowedValuesJSON, &arr); err == nil {
+					f.AllowedValues = &arr
+				}
+			}
+			fieldDefsByKey[f.Key] = f
+		}
+	}
+	return fieldDefsByKey
+}
+
+// buildLinkedCustomFields builds linked custom fields array for a given allowed value.
+// Returns all linked custom fields from the definition, not filtered by tree hierarchy.
+func buildLinkedCustomFields(allowedValue *AllowedValue) []LinkedCustomField {
+	if allowedValue == nil || len(allowedValue.LinkedCustomFields) == 0 {
+		return nil
+	}
+
+	// Return all linked custom fields from the definition
+	return allowedValue.LinkedCustomFields
+}
+
 func buildTreeLevel(positions []struct {
 	ID             string
 	Name           string
 	CustomFields   map[string]string
 	EmployeeFullName *string
-}, levels []TreeLevel, levelIndex int, path map[string]string) []TreeNode {
+}, levels []TreeLevel, levelIndex int, path map[string]string, fieldDefsByKey map[string]CustomFieldDefinition, treeLevelFieldKeys map[string]bool) []TreeNode {
 	if levelIndex >= len(levels) {
 		// Leaf level - return positions
 		var nodes []TreeNode
@@ -261,29 +309,265 @@ func buildTreeLevel(positions []struct {
 		return nodes
 	}
 
+	// Get field definition to check for linked fields
+	fieldDef, hasFieldDef := fieldDefsByKey[fieldKey]
+	
+	// Check if any value has linked custom fields
+	hasLinkedFields := false
+	if hasFieldDef && fieldDef.AllowedValues != nil {
+		for _, allowedVal := range *fieldDef.AllowedValues {
+			// Match by value_id (UUID string) or by value text
+			valueIDStr := allowedVal.ValueID.String()
+			for val := range valueSet {
+				if val == valueIDStr || val == allowedVal.Value {
+					if len(allowedVal.LinkedCustomFields) > 0 {
+						hasLinkedFields = true
+						break
+					}
+				}
+			}
+			if hasLinkedFields {
+				break
+			}
+		}
+	}
+
 	// Create nodes for each unique value
 	var nodes []TreeNode
 	for val := range valueSet {
-		valCopy := val
 		levelOrder := order
 		fieldKeyCopy := fieldKey
 
-		// Build new path
-		newPath := make(map[string]string)
-		for k, v := range path {
-			newPath[k] = v
+		// Find matching allowed value to get linked fields
+		var matchedAllowedValue *AllowedValue
+		if hasFieldDef && fieldDef.AllowedValues != nil {
+			for i := range *fieldDef.AllowedValues {
+				allowedVal := &(*fieldDef.AllowedValues)[i]
+				valueIDStr := allowedVal.ValueID.String()
+				if val == valueIDStr || val == allowedVal.Value {
+					matchedAllowedValue = allowedVal
+					break
+				}
+			}
 		}
-		newPath[fieldKey] = val
 
-		children := buildTreeLevel(positions, levels, levelIndex+1, newPath)
+		// If this value has linked fields, create separate folders for each linked value
+		// Разными значениями также считаются значения одного кастомного поля, 
+		// к которому прилинкованы разные значения другого кастомного поля
+		hasLinkedFields := false
+		if matchedAllowedValue != nil && len(matchedAllowedValue.LinkedCustomFields) > 0 {
+			hasLinkedFields = true
+		}
+		
+		if hasLinkedFields {
+			// Group positions by linked field values
+			linkedValueGroups := make(map[string][]struct {
+				ID             string
+				Name           string
+				CustomFields   map[string]string
+				EmployeeFullName *string
+			})
+			positionsWithoutLinkedValue := []struct {
+				ID             string
+				Name           string
+				CustomFields   map[string]string
+				EmployeeFullName *string
+			}{}
 
-		nodes = append(nodes, TreeNode{
-			Type:       "field_value",
-			LevelOrder: &levelOrder,
-			FieldKey:   &fieldKeyCopy,
-			FieldValue: &valCopy,
-			Children:   children,
-		})
+			// Get main value name for display
+			mainValueName := matchedAllowedValue.Value
+
+			// Create a map to get level order for linked fields (for sorting)
+			linkedFieldOrder := make(map[string]int)
+			for i, level := range levels {
+				linkedFieldOrder[level.CustomFieldKey] = i
+			}
+
+			// Group positions by all linked field values
+			// Разными значениями также считаются значения одного кастомного поля,
+			// к которому прилинкованы разные значения другого кастомного поля
+			for _, pos := range positions {
+				if !matchesPath(pos.CustomFields, path) {
+					continue
+				}
+				posVal, ok := pos.CustomFields[fieldKey]
+				if !ok || posVal != val {
+					continue
+				}
+
+				// Collect all linked field values
+				// Название прилинкованного кастомного поля брать из объекта "custom_field_value" 
+				// "linked_custom_field_value", находящегося иерархично в объекте "linked_custom_fields"
+				type linkedValueInfo struct {
+					fieldKey   string
+					valueName  string
+					order      int
+				}
+				var linkedValues []linkedValueInfo
+
+				for _, linkedField := range matchedAllowedValue.LinkedCustomFields {
+					linkedFieldKey := linkedField.LinkedCustomFieldKey
+					
+					linkedStoredValue, linkedExists := pos.CustomFields[linkedFieldKey]
+					
+					if linkedExists && linkedStoredValue != "" {
+						// Find matching linked value name from linked_custom_field_value
+						linkedValueName := linkedStoredValue
+						for _, linkedValueDef := range linkedField.LinkedCustomFieldValues {
+							linkedValueIDStr := linkedValueDef.LinkedCustomFieldValueID.String()
+							if linkedStoredValue == linkedValueIDStr || linkedStoredValue == linkedValueDef.LinkedCustomFieldValue {
+								// Название прилинкованного кастомного поля из linked_custom_field_value
+								linkedValueName = linkedValueDef.LinkedCustomFieldValue
+								break
+							}
+						}
+						
+						// Use order from tree hierarchy if field is in tree, otherwise use a high order
+						order := 9999
+						if treeLevelFieldKeys[linkedFieldKey] {
+							order = linkedFieldOrder[linkedFieldKey]
+						}
+						
+						linkedValues = append(linkedValues, linkedValueInfo{
+							fieldKey:  linkedFieldKey,
+							valueName: linkedValueName,
+							order:     order,
+						})
+					}
+				}
+
+				if len(linkedValues) > 0 {
+					// Sort linked values by their order in the tree hierarchy
+					sort.Slice(linkedValues, func(i, j int) bool {
+						return linkedValues[i].order < linkedValues[j].order
+					})
+
+					// Build folder name: "main value - linked value 1 - linked value 2 - ..."
+					folderName := mainValueName
+					for _, lv := range linkedValues {
+						folderName += " - " + lv.valueName
+					}
+					
+					linkedValueGroups[folderName] = append(linkedValueGroups[folderName], pos)
+				} else {
+					positionsWithoutLinkedValue = append(positionsWithoutLinkedValue, pos)
+				}
+			}
+
+			// Create nodes for each linked value group
+			for folderName, groupPositions := range linkedValueGroups {
+				// Build new path (still using original value for path matching)
+				newPath := make(map[string]string)
+				for k, v := range path {
+					newPath[k] = v
+				}
+				newPath[fieldKey] = val
+
+				children := buildTreeLevel(groupPositions, levels, levelIndex+1, newPath, fieldDefsByKey, treeLevelFieldKeys)
+
+				// Build linked custom fields (all linked fields from definition)
+				linkedFields := buildLinkedCustomFields(matchedAllowedValue)
+
+				customFieldID := fieldDef.ID.String()
+				customFieldKey := fieldKey
+				customFieldValue := folderName // Use folderName which contains "main value - linked value 1 - linked value 2"
+
+				nodes = append(nodes, TreeNode{
+					Type:              "custom_field_value",
+					LevelOrder:         &levelOrder,
+					CustomFieldID:      &customFieldID,
+					CustomFieldKey:     &customFieldKey,
+					CustomFieldValue:   &customFieldValue,
+					LinkedCustomFields: linkedFields,
+					Children:           children,
+				})
+			}
+
+			// Add positions without linked values under main value name
+			if len(positionsWithoutLinkedValue) > 0 {
+				newPath := make(map[string]string)
+				for k, v := range path {
+					newPath[k] = v
+				}
+				newPath[fieldKey] = val
+
+				children := buildTreeLevel(positionsWithoutLinkedValue, levels, levelIndex+1, newPath, fieldDefsByKey, treeLevelFieldKeys)
+
+				// Build linked custom fields (all linked fields from definition)
+				linkedFields := buildLinkedCustomFields(matchedAllowedValue)
+
+				customFieldID := fieldDef.ID.String()
+				customFieldKey := fieldKey
+				customFieldValue := mainValueName
+
+				nodes = append(nodes, TreeNode{
+					Type:              "custom_field_value",
+					LevelOrder:         &levelOrder,
+					CustomFieldID:      &customFieldID,
+					CustomFieldKey:     &customFieldKey,
+					CustomFieldValue:   &customFieldValue,
+					LinkedCustomFields: linkedFields,
+					Children:           children,
+				})
+			}
+		} else {
+			// No linked fields - create node as before
+			// Filter positions that match this value
+			var matchingPositions []struct {
+				ID             string
+				Name           string
+				CustomFields   map[string]string
+				EmployeeFullName *string
+			}
+			for _, pos := range positions {
+				if !matchesPath(pos.CustomFields, path) {
+					continue
+				}
+				posVal, ok := pos.CustomFields[fieldKey]
+				if ok && posVal == val {
+					matchingPositions = append(matchingPositions, pos)
+				}
+			}
+
+			// Build new path
+			newPath := make(map[string]string)
+			for k, v := range path {
+				newPath[k] = v
+			}
+			newPath[fieldKey] = val
+
+			// Get display name from allowed values if available
+			displayValue := val
+			if matchedAllowedValue != nil {
+				displayValue = matchedAllowedValue.Value
+			}
+
+			children := buildTreeLevel(matchingPositions, levels, levelIndex+1, newPath, fieldDefsByKey, treeLevelFieldKeys)
+
+			// Build linked custom fields (all linked fields from definition)
+			var linkedFields []LinkedCustomField
+			if matchedAllowedValue != nil {
+				linkedFields = buildLinkedCustomFields(matchedAllowedValue)
+			}
+
+			var customFieldID *string
+			var customFieldKey *string
+			if hasFieldDef {
+				id := fieldDef.ID.String()
+				customFieldID = &id
+				customFieldKey = &fieldKeyCopy
+			}
+
+			nodes = append(nodes, TreeNode{
+				Type:              "custom_field_value",
+				LevelOrder:         &levelOrder,
+				CustomFieldID:      customFieldID,
+				CustomFieldKey:     customFieldKey,
+				CustomFieldValue:   &displayValue,
+				LinkedCustomFields: linkedFields,
+				Children:           children,
+			})
+		}
 	}
 
 	// Добавляем должности без значения текущего уровня как отдельные листовые узлы
@@ -304,7 +588,7 @@ func buildTreeLevel(positions []struct {
 	// в котором они пришли из БД (по id), и всегда после папок.
 	var fieldNodes, positionNodes []TreeNode
 	for _, n := range nodes {
-		if n.Type == "field_value" {
+		if n.Type == "custom_field_value" {
 			fieldNodes = append(fieldNodes, n)
 		} else {
 			positionNodes = append(positionNodes, n)
@@ -314,11 +598,15 @@ func buildTreeLevel(positions []struct {
 	// Сортируем только папки по названию
 	sort.Slice(fieldNodes, func(i, j int) bool {
 		vi := ""
-		if fieldNodes[i].FieldValue != nil {
+		if fieldNodes[i].CustomFieldValue != nil {
+			vi = *fieldNodes[i].CustomFieldValue
+		} else if fieldNodes[i].FieldValue != nil {
 			vi = *fieldNodes[i].FieldValue
 		}
 		vj := ""
-		if fieldNodes[j].FieldValue != nil {
+		if fieldNodes[j].CustomFieldValue != nil {
+			vj = *fieldNodes[j].CustomFieldValue
+		} else if fieldNodes[j].FieldValue != nil {
 			vj = *fieldNodes[j].FieldValue
 		}
 		return vi < vj

@@ -101,10 +101,14 @@ type TreeStructure struct {
 
 // TreeNode represents a node in the tree
 type TreeNode struct {
-	Type            string     `json:"type"` // "root", "field_value", "position"
+	Type            string     `json:"type"` // "root", "custom_field_value", "position"
 	LevelOrder      *int       `json:"level_order,omitempty"`
-	FieldKey        *string    `json:"field_key,omitempty"`
-	FieldValue      *string    `json:"field_value,omitempty"`
+	FieldKey        *string    `json:"field_key,omitempty"` // Deprecated: use CustomFieldKey
+	FieldValue      *string    `json:"field_value,omitempty"` // Deprecated: use CustomFieldValue
+	CustomFieldID   *string    `json:"custom_field_id,omitempty"`
+	CustomFieldKey  *string    `json:"custom_field_key,omitempty"`
+	CustomFieldValue *string   `json:"custom_field_value,omitempty"`
+	LinkedCustomFields []LinkedCustomField `json:"linked_custom_fields,omitempty"`
 	PositionID      *string    `json:"position_id,omitempty"`
 	PositionName    *string    `json:"position_name,omitempty"`
 	EmployeeFullName *string   `json:"employee_full_name,omitempty"`

@@ -36,22 +36,64 @@ function PositionCustomFieldsModal({
               {Object.entries(customFieldsValues).map(([key, value]) => {
                 const fieldDef = availableCustomFields.find(f => f.key === key);
                 const isEnum = fieldDef?.allowed_values && fieldDef.allowed_values.length > 0;
+                
+                // Нормализуем текущее значение для поиска совпадения
+                const normalizedCurrentValue = value ? String(value).trim() : '';
+                
+                // Находим текущее выбранное значение среди allowed_values
+                // Учитываем, что значение могло быть установлено через прилинкованное поле
+                let currentValueForSelect = '';
+                if (isEnum && normalizedCurrentValue) {
+                  // Нормализуем все значения из allowed_values для сравнения
+                  const normalizedAllowedValues = fieldDef.allowed_values.map(v => ({
+                    original: v,
+                    normalized: typeof v === 'string' ? v.trim() : String(v.value || '').trim(),
+                    valueId: typeof v === 'object' && v.value_id ? String(v.value_id).trim() : null
+                  }));
+                  
+                  // Сначала пытаемся найти точное совпадение по значению
+                  let matched = normalizedAllowedValues.find(nv => 
+                    nv.normalized === normalizedCurrentValue
+                  );
+                  
+                  // Если не нашли, пытаемся найти по value_id
+                  if (!matched) {
+                    matched = normalizedAllowedValues.find(nv => 
+                      nv.valueId && nv.valueId === normalizedCurrentValue
+                    );
+                  }
+                  
+                  // Если нашли совпадение, используем нормализованное значение из allowed_values
+                  if (matched) {
+                    currentValueForSelect = matched.normalized;
+                  } else {
+                    // Если не нашли в allowed_values, но значение есть - возможно, это прилинкованное значение
+                    // Используем сохраненное значение, чтобы оно отобразилось (даже если не в списке)
+                    currentValueForSelect = normalizedCurrentValue;
+                  }
+                } else if (normalizedCurrentValue && !isEnum) {
+                  // Для не-enum полей просто используем сохраненное значение
+                  currentValueForSelect = normalizedCurrentValue;
+                }
+                
                 return (
                   <div key={key} className="custom-field-item">
                     <label>{fieldDef ? fieldDef.label : key}</label>
                     <div className="custom-field-input-group">
                       {isEnum ? (
                         <select
-                          value={value || ''}
+                          value={currentValueForSelect}
                           onChange={(e) => {
                             const selectedValue = e.target.value;
-                            onChangeValue(key, selectedValue);
+                            // Нормализуем выбранное значение
+                            const normalizedValue = selectedValue.trim();
+                            onChangeValue(key, normalizedValue);
                             
                             // Если выбрано значение с привязанными полями, автоматически добавляем их
-                            if (selectedValue) {
+                            if (normalizedValue) {
                               const selectedValObj = fieldDef.allowed_values.find(v => {
-                                const valStr = typeof v === 'string' ? v : (v.value || String(v));
-                                return valStr === selectedValue;
+                                const valStr = typeof v === 'string' ? v.trim() : String(v.value || '').trim();
+                                return valStr === normalizedValue;
                               });
                               
                               if (selectedValObj && typeof selectedValObj === 'object' && selectedValObj.linked_custom_fields) {
@@ -61,7 +103,7 @@ function PositionCustomFieldsModal({
                                     // Добавляем привязанное значение только если оно еще не установлено
                                     const linkedKey = linkedField.linked_custom_field_key;
                                     if (!customFieldsValues[linkedKey]) {
-                                      onChangeValue(linkedKey, linkedVal.linked_custom_field_value);
+                                      onChangeValue(linkedKey, String(linkedVal.linked_custom_field_value || '').trim());
                                     }
                                   });
                                 });
@@ -72,23 +114,34 @@ function PositionCustomFieldsModal({
                           <option value="">Выберите значение...</option>
                           {fieldDef.allowed_values.map((val, idx) => {
                             // Поддержка нового формата (объект с value) и старого (строка)
-                            const valueStr = typeof val === 'string' ? val : (val.value || String(val));
+                            const valueStr = typeof val === 'string' ? val.trim() : String(val.value || '').trim();
                             const hasLinked = typeof val === 'object' && val.linked_custom_fields && val.linked_custom_fields.length > 0;
                             // Собираем все привязанные значения в один массив
                             const linkedValues = hasLinked 
                               ? val.linked_custom_fields.flatMap(lf => 
-                                  lf.linked_custom_field_values.map(lv => lv.linked_custom_field_value)
+                                  lf.linked_custom_field_values.map(lv => String(lv.linked_custom_field_value || '').trim())
                                 )
                               : [];
                             const linkedInfo = linkedValues.length > 0 
                               ? ` (${linkedValues.join(', ')})`
                               : '';
                             return (
-                              <option key={idx} value={valueStr}>
+                              <option key={`${key}-${valueStr}-${idx}`} value={valueStr}>
                                 {valueStr}{linkedInfo}
                               </option>
                             );
                           })}
+                          {/* Добавляем опцию для текущего значения, если оно не найдено в allowed_values 
+                              (например, установлено через прилинкованное поле) */}
+                          {normalizedCurrentValue && currentValueForSelect === normalizedCurrentValue && 
+                           !fieldDef.allowed_values.some(v => {
+                             const valStr = typeof v === 'string' ? v.trim() : String(v.value || '').trim();
+                             return valStr === normalizedCurrentValue;
+                           }) && (
+                            <option key={`${key}-linked-${normalizedCurrentValue}`} value={normalizedCurrentValue}>
+                              {normalizedCurrentValue}
+                            </option>
+                          )}
                         </select>
                       ) : (
                         <input

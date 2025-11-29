@@ -24,12 +24,20 @@ function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onSho
   const positionsRef = useRef([]);
   const allPositionsRef = useRef([]);
 
+  // Первоначальная загрузка при монтировании компонента
+  useEffect(() => {
+    loadTrees();
+    loadPositions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Обновляем список деревьев при изменении treeRefreshTrigger
   useEffect(() => {
     loadTrees();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [treeRefreshTrigger]);
 
-  // Загружаем список должностей
+  // Обновляем список должностей при изменении refreshTrigger
   useEffect(() => {
     loadPositions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -51,13 +59,31 @@ function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onSho
         localStorage.removeItem(STORAGE_KEY_SELECTED_TREE_ID);
         return;
       }
-      rebuildTreeStructureLocally(selectedTreeId);
+      // Загружаем структуру дерева с сервера
+      loadTreeStructure(selectedTreeId);
     } else {
       // Когда выбрано "Плоское" (пустое значение), создаем плоскую структуру
       rebuildFlatStructureLocally();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTreeId, positions, trees, loading]);
+  }, [selectedTreeId, trees, loading]);
+
+  // Обновляем структуру дерева при изменении позиций
+  // При первом входе или обновлении страницы всегда используем ручку structure
+  useEffect(() => {
+    if (loading || !treeStructure) {
+      // Не обновляем, если структура еще не загружена (первоначальная загрузка)
+      return;
+    }
+    
+    if (selectedTreeId && selectedTreeId !== '') {
+      // При изменении позиций перезагружаем структуру с сервера
+      loadTreeStructure(selectedTreeId);
+    } else {
+      rebuildFlatStructureLocally();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positions]);
 
   // Применяем фильтр при изменении поискового запроса
   useEffect(() => {
@@ -334,8 +360,7 @@ function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onSho
   };
 
 
-  // Эта функция больше не используется для обновления после операций с должностями,
-  // но оставляем её для первоначальной загрузки при смене дерева (если нужно)
+  // Загружает структуру дерева с сервера через API
   const loadTreeStructure = async (treeId) => {
     if (!treeId) {
       setTreeStructure(null);
@@ -345,8 +370,28 @@ function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onSho
       }
       return;
     }
-    // Используем локальное построение вместо HTTP запроса
-    rebuildTreeStructureLocally(treeId);
+
+    try {
+      setLoadingTree(true);
+      setTreeStructure(null);
+      if (onTreeStructureChange) {
+        onTreeStructureChange(null);
+      }
+
+      const response = await axios.get(`${API_BASE}/trees/${treeId}/structure`);
+      const structure = response.data;
+      
+      setTreeStructure(structure);
+      if (onTreeStructureChange) {
+        onTreeStructureChange(structure);
+      }
+    } catch (error) {
+      console.error('Failed to load tree structure from server:', error);
+      // Fallback: используем локальное построение при ошибке
+      rebuildTreeStructureLocally(treeId);
+    } finally {
+      setLoadingTree(false);
+    }
   };
 
   const handleTreeChange = (treeId) => {

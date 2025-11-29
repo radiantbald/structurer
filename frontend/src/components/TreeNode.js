@@ -1,14 +1,31 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import './TreeNode.css';
 
+// Вспомогательная функция для получения ключа и значения узла (поддержка старого и нового формата)
+const getNodeKeyValue = (node) => {
+  if (node.custom_field_key && node.custom_field_value) {
+    return { key: node.custom_field_key, value: node.custom_field_value };
+  }
+  if (node.field_key && node.field_value) {
+    return { key: node.field_key, value: node.field_value };
+  }
+  return null;
+};
+
+// Вспомогательная функция для проверки типа узла поля (поддержка старого и нового формата)
+const isFieldValueNode = (node) => {
+  return node.type === 'field_value' || node.type === 'custom_field_value';
+};
+
 // Вспомогательная функция для рекурсивного поиска узла в поддереве (вынесена наружу для стабильности)
 const findNodeInSubtree = (currentNode, targetNode) => {
   if (!currentNode || !targetNode) return false;
   
   // Проверяем, соответствует ли текущий узел целевому
-  if (currentNode.type === 'field_value' && targetNode.type === 'field_value') {
-    if (currentNode.field_key === targetNode.field_key && 
-        currentNode.field_value === targetNode.field_value) {
+  if (isFieldValueNode(currentNode) && isFieldValueNode(targetNode)) {
+    const current = getNodeKeyValue(currentNode);
+    const target = getNodeKeyValue(targetNode);
+    if (current && target && current.key === target.key && current.value === target.value) {
       return true;
     }
   }
@@ -65,13 +82,16 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
 
   // Автоматически разворачиваем узел, если он выбран или находится на пути к выбранному узлу/позиции
   useEffect(() => {
-    if (node.type === 'field_value') {
+    if (isFieldValueNode(node)) {
       let shouldExpand = false;
       
       // Проверяем выбранный узел
       if (selectedNode) {
-        const isSelected = selectedNode.field_key === node.field_key && 
-                          selectedNode.field_value === node.field_value;
+        const nodeKV = getNodeKeyValue(node);
+        const selectedKV = getNodeKeyValue(selectedNode);
+        const isSelected = nodeKV && selectedKV && 
+                          nodeKV.key === selectedKV.key && 
+                          nodeKV.value === selectedKV.value;
         const isOnPath = findNodeInSubtree(node, selectedNode);
         shouldExpand = isSelected || isOnPath;
       }
@@ -198,10 +218,11 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
     );
   }
 
-  if (node.type === 'field_value') {
+  if (isFieldValueNode(node)) {
+    const nodeKV = getNodeKeyValue(node);
     const newPath = { ...path };
-    if (node.field_key && node.field_value) {
-      newPath[node.field_key] = node.field_value;
+    if (nodeKV) {
+      newPath[nodeKV.key] = nodeKV.value;
     }
 
     const hasChildren = node.children && node.children.length > 0;
@@ -211,16 +232,20 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
       ? node.children.filter(child => child.type === 'position')
       : [];
     const fieldValueChildren = hasChildren
-      ? node.children.filter(child => child.type === 'field_value')
+      ? node.children.filter(child => isFieldValueNode(child))
       : [];
     
     // Подсчитываем все позиции во всех дочерних уровнях
     const totalPositions = countAllPositions(node);
     
     // Проверяем, является ли текущий узел выбранным
-    const isSelected = selectedNode && 
-                      selectedNode.field_key === node.field_key && 
-                      selectedNode.field_value === node.field_value;
+    const selectedKV = selectedNode ? getNodeKeyValue(selectedNode) : null;
+    const isSelected = selectedKV && nodeKV && 
+                      selectedKV.key === nodeKV.key && 
+                      selectedKV.value === nodeKV.value;
+    
+    // Получаем значение для отображения
+    const displayValue = nodeKV ? nodeKV.value : (node.custom_field_value || node.field_value || '');
 
     return (
       <div className={`tree-node tree-node-field tree-node-level-${level}`}>
@@ -232,7 +257,7 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
             {hasChildren ? (expanded ? '📂' : '📁') : '📁'}
           </span>
           <span className="tree-node-label">
-            {node.field_value}
+            {displayValue}
           </span>
           {totalPositions > 0 && (
             <>
@@ -292,7 +317,7 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
                 Создать
               </button>
             </div>
-            {/* В конце показываем дочерние узлы (field_value) */}
+            {/* В конце показываем дочерние узлы (custom_field_value/field_value) */}
             {fieldValueChildren.map((child, index) => (
               <TreeNode
                 key={`field-${index}`}

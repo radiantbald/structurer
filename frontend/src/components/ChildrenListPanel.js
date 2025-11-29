@@ -1,6 +1,21 @@
 import React from 'react';
 import './ChildrenListPanel.css';
 
+// Вспомогательные функции для работы с узлами (поддержка старого и нового формата)
+const getNodeKeyValue = (node) => {
+  if (node.custom_field_key && node.custom_field_value) {
+    return { key: node.custom_field_key, value: node.custom_field_value };
+  }
+  if (node.field_key && node.field_value) {
+    return { key: node.field_key, value: node.field_value };
+  }
+  return null;
+};
+
+const isFieldValueNode = (node) => {
+  return node.type === 'field_value' || node.type === 'custom_field_value';
+};
+
 // Вспомогательная функция для рекурсивного подсчета всех позиций в поддереве
 const countAllPositions = (node) => {
   if (!node) return 0;
@@ -61,7 +76,7 @@ const countAllSubdivisions = (node) => {
   if (node.children) {
     node.children.forEach(child => {
       // Если дочерний узел - подразделение, считаем его и рекурсивно его дочерние
-      if (child.type === 'field_value') {
+      if (isFieldValueNode(child)) {
         count += 1; // Считаем само подразделение
         count += countAllSubdivisions(child); // Рекурсивно считаем дочерние подразделения
       } else {
@@ -135,7 +150,7 @@ function ChildrenListPanel({ node, onPositionSelect, onNodeSelect }) {
       );
     }
 
-    if (child.type === 'field_value') {
+    if (isFieldValueNode(child)) {
       const totalPositions = countAllPositions(child);
       const totalSubdivisions = countAllSubdivisions(child);
       const hasChildren = child.children && child.children.length > 0;
@@ -144,6 +159,10 @@ function ChildrenListPanel({ node, onPositionSelect, onNodeSelect }) {
           onNodeSelect(child);
         }
       };
+      
+      // Получаем значение для отображения
+      const nodeKV = getNodeKeyValue(child);
+      const displayValue = nodeKV ? nodeKV.value : (child.custom_field_value || child.field_value || 'Без названия');
       
       // Формируем информацию о количестве (сначала подразделения, потом сотрудники)
       const countParts = [];
@@ -161,7 +180,7 @@ function ChildrenListPanel({ node, onPositionSelect, onNodeSelect }) {
           onClick={hasChildren ? handleFieldNodeClick : undefined}
         >
           <span className="children-list-item-name">
-            {child.field_value || 'Без названия'}
+            {displayValue}
           </span>
           {countParts.length > 0 && (
             <span className="children-list-item-count">
@@ -175,11 +194,21 @@ function ChildrenListPanel({ node, onPositionSelect, onNodeSelect }) {
     return null;
   };
 
-  const nodeTitle = node.type === 'root'
-    ? 'Все сотрудники'
-    : node.type === 'position' 
-    ? (node.position_name || `Должность #${node.position_id}`)
-    : (node.field_value || 'Узел');
+  const getNodeTitle = (node) => {
+    if (node.type === 'root') {
+      return 'Все сотрудники';
+    }
+    if (node.type === 'position') {
+      return node.position_name || `Должность #${node.position_id}`;
+    }
+    if (isFieldValueNode(node)) {
+      const nodeKV = getNodeKeyValue(node);
+      return nodeKV ? nodeKV.value : (node.custom_field_value || node.field_value || 'Узел');
+    }
+    return 'Узел';
+  };
+  
+  const nodeTitle = getNodeTitle(node);
 
   // Подсчитываем общее количество сотрудников
   const totalEmployees = countAllPositions(node);
@@ -201,7 +230,7 @@ function ChildrenListPanel({ node, onPositionSelect, onNodeSelect }) {
   const subtitleText = parts.length > 0 ? parts.join(', ') : '';
 
   // Разделяем детей на подразделения и сотрудников
-  const subdivisions = node.children.filter(child => child.type === 'field_value');
+  const subdivisions = node.children.filter(child => isFieldValueNode(child));
   const positions = node.children.filter(child => child.type === 'position');
 
   return (

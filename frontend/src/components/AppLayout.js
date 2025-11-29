@@ -13,6 +13,21 @@ const STORAGE_KEYS = {
   SELECTED_NODE_PATH: 'selectedNodePath',
 };
 
+// Вспомогательные функции для работы с узлами (поддержка старого и нового формата)
+const getNodeKeyValue = (node) => {
+  if (node.custom_field_key && node.custom_field_value) {
+    return { key: node.custom_field_key, value: node.custom_field_value };
+  }
+  if (node.field_key && node.field_value) {
+    return { key: node.field_key, value: node.field_value };
+  }
+  return null;
+};
+
+const isFieldValueNode = (node) => {
+  return node.type === 'field_value' || node.type === 'custom_field_value';
+};
+
 function AppLayout() {
   // Восстанавливаем состояние из localStorage при инициализации
   const [selectedPositionId, setSelectedPositionId] = useState(() => {
@@ -94,29 +109,33 @@ function AppLayout() {
         return;
       }
 
-      // Если это узел field_value, проверяем его path
-      if (currentNode.type === 'field_value' && currentNode.field_key && currentNode.field_value) {
-        const newPath = { ...path, [currentNode.field_key]: currentNode.field_value };
-        
-        // Проверяем, является ли этот path префиксом targetPath
-        if (isPathPrefix(newPath, targetPath)) {
-          const pathLength = Object.keys(newPath).length;
-          // Если этот path длиннее текущего лучшего совпадения, обновляем
-          if (pathLength > bestPathLength) {
-            bestMatch = currentNode;
-            bestPathLength = pathLength;
+      // Если это узел field_value/custom_field_value, проверяем его path
+      if (isFieldValueNode(currentNode)) {
+        const nodeKV = getNodeKeyValue(currentNode);
+        if (nodeKV) {
+          const newPath = { ...path, [nodeKV.key]: nodeKV.value };
+          
+          // Проверяем, является ли этот path префиксом targetPath
+          if (isPathPrefix(newPath, targetPath)) {
+            const pathLength = Object.keys(newPath).length;
+            // Если этот path длиннее текущего лучшего совпадения, обновляем
+            if (pathLength > bestPathLength) {
+              bestMatch = currentNode;
+              bestPathLength = pathLength;
+            }
           }
-        }
 
-        // Продолжаем поиск в детях
-        for (const child of currentNode.children || []) {
-          traverse(child, newPath);
+          // Продолжаем поиск в детях
+          for (const child of currentNode.children || []) {
+            traverse(child, newPath);
+          }
+          return;
         }
-      } else {
-        // Для других типов узлов продолжаем поиск в детях
-        for (const child of currentNode.children || []) {
-          traverse(child, path);
-        }
+      }
+      
+      // Для других типов узлов продолжаем поиск в детях
+      for (const child of currentNode.children || []) {
+        traverse(child, path);
       }
     };
 
@@ -213,34 +232,40 @@ function AppLayout() {
       return null;
     }
     
-    // Для узлов field_value собираем путь из field_key и field_value
-    if (node.type === 'field_value' && node.field_key && node.field_value) {
-      // Находим путь, обходя дерево от корня до этого узла
-      const findPath = (currentNode, targetNode, currentPath = {}) => {
-        if (currentNode === targetNode) {
-          return currentPath;
-        }
-        
-        if (currentNode.children) {
-          for (const child of currentNode.children) {
-            if (child.type === 'field_value' && child.field_key && child.field_value) {
-              const newPath = { ...currentPath, [child.field_key]: child.field_value };
-              const result = findPath(child, targetNode, newPath);
-              if (result) {
-                return result;
-              }
-            } else {
-              const result = findPath(child, targetNode, currentPath);
-              if (result) {
-                return result;
+    // Для узлов field_value/custom_field_value собираем путь из ключа и значения
+    if (isFieldValueNode(node)) {
+      const nodeKV = getNodeKeyValue(node);
+      if (nodeKV) {
+        // Находим путь, обходя дерево от корня до этого узла
+        const findPath = (currentNode, targetNode, currentPath = {}) => {
+          if (currentNode === targetNode) {
+            return currentPath;
+          }
+          
+          if (currentNode.children) {
+            for (const child of currentNode.children) {
+              if (isFieldValueNode(child)) {
+                const childKV = getNodeKeyValue(child);
+                if (childKV) {
+                  const newPath = { ...currentPath, [childKV.key]: childKV.value };
+                  const result = findPath(child, targetNode, newPath);
+                  if (result) {
+                    return result;
+                  }
+                }
+              } else {
+                const result = findPath(child, targetNode, currentPath);
+                if (result) {
+                  return result;
+                }
               }
             }
           }
-        }
-        return null;
-      };
-      
-      return findPath(structure.root, node);
+          return null;
+        };
+        
+        return findPath(structure.root, node);
+      }
     }
     
     return null;
@@ -270,30 +295,33 @@ function AppLayout() {
         return true;
       };
       
-      if (node.type === 'field_value' && node.field_key && node.field_value) {
-        const newPath = { ...currentPath, [node.field_key]: node.field_value };
-        
-        if (pathMatches(newPath, path)) {
-          return node;
-        }
-        
-        // Проверяем, является ли newPath префиксом искомого пути
-        const isPrefix = (prefix, full) => {
-          for (const key in prefix) {
-            if (full[key] !== prefix[key]) {
-              return false;
-            }
+      if (isFieldValueNode(node)) {
+        const nodeKV = getNodeKeyValue(node);
+        if (nodeKV) {
+          const newPath = { ...currentPath, [nodeKV.key]: nodeKV.value };
+          
+          if (pathMatches(newPath, path)) {
+            return node;
           }
-          return true;
-        };
-        
-        if (isPrefix(newPath, path)) {
-          // Продолжаем поиск в детях
-          if (node.children) {
-            for (const child of node.children) {
-              const result = traverse(child, path, newPath);
-              if (result) {
-                return result;
+          
+          // Проверяем, является ли newPath префиксом искомого пути
+          const isPrefix = (prefix, full) => {
+            for (const key in prefix) {
+              if (full[key] !== prefix[key]) {
+                return false;
+              }
+            }
+            return true;
+          };
+          
+          if (isPrefix(newPath, path)) {
+            // Продолжаем поиск в детях
+            if (node.children) {
+              for (const child of node.children) {
+                const result = traverse(child, path, newPath);
+                if (result) {
+                  return result;
+                }
               }
             }
           }

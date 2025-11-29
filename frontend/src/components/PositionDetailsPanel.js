@@ -66,15 +66,18 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
           const fieldKey = item.custom_field_key;
           
           if (fieldKey) {
-            // Store value_id or value string
-            customFieldsObj[fieldKey] = item.value_id || item.value;
+            // Store value string (not value_id) to match select option values
+            // Нормализуем значение, обрезая пробелы для точного совпадения
+            const normalizedValue = item.value ? String(item.value).trim() : '';
+            customFieldsObj[fieldKey] = normalizedValue;
             
             // Store linked values if they exist
             if (item.linked_custom_fields && Array.isArray(item.linked_custom_fields)) {
               item.linked_custom_fields.forEach(linkedField => {
                 if (linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
                   linkedField.linked_custom_field_values.forEach(linkedVal => {
-                    customFieldsObj[linkedField.linked_custom_field_key] = linkedVal.linked_custom_field_value_id || linkedVal.linked_custom_field_value;
+                    const normalizedLinkedValue = linkedVal.linked_custom_field_value ? String(linkedVal.linked_custom_field_value).trim() : '';
+                    customFieldsObj[linkedField.linked_custom_field_key] = normalizedLinkedValue;
                   });
                 }
               });
@@ -84,14 +87,17 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
             const fieldDef = customFields.find(f => {
               if (!f.allowed_values || !Array.isArray(f.allowed_values)) return false;
               return f.allowed_values.some(av => {
-                const val = typeof av === 'string' ? av : (av.value || '');
-                const valId = typeof av === 'object' && av.value_id ? av.value_id : '';
-                return valId === item.value_id || val === item.value || val === item.value_id;
+                const val = typeof av === 'string' ? av.trim() : String(av.value || '').trim();
+                const valId = typeof av === 'object' && av.value_id ? String(av.value_id).trim() : '';
+                const itemValue = item.value ? String(item.value).trim() : '';
+                const itemValueId = item.value_id ? String(item.value_id).trim() : '';
+                return valId === itemValueId || val === itemValue || val === itemValueId || valId === itemValue;
               });
             });
             
             if (fieldDef) {
-              customFieldsObj[fieldDef.key] = item.value_id || item.value;
+              const normalizedValue = item.value ? String(item.value).trim() : '';
+              customFieldsObj[fieldDef.key] = normalizedValue;
             }
           }
         });
