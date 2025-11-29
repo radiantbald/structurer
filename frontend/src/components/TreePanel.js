@@ -59,14 +59,19 @@ function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onSho
         localStorage.removeItem(STORAGE_KEY_SELECTED_TREE_ID);
         return;
       }
-      // Загружаем структуру дерева с сервера
-      loadTreeStructure(selectedTreeId);
+      // Если есть поисковый запрос, перестраиваем дерево локально из отфильтрованных позиций
+      if (searchQuery && searchQuery.trim()) {
+        rebuildTreeStructureLocally(selectedTreeId);
+      } else {
+        // Загружаем структуру дерева с сервера
+        loadTreeStructure(selectedTreeId);
+      }
     } else {
       // Когда выбрано "Плоское" (пустое значение), создаем плоскую структуру
       rebuildFlatStructureLocally();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTreeId, trees, loading]);
+  }, [selectedTreeId, trees, loading, searchQuery]);
 
   // Обновляем структуру дерева при изменении позиций
   // При первом входе или обновлении страницы всегда используем ручку structure
@@ -76,19 +81,45 @@ function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onSho
       return;
     }
     
-    if (selectedTreeId && selectedTreeId !== '') {
-      // При изменении позиций перезагружаем структуру с сервера
-      loadTreeStructure(selectedTreeId);
+    // Если есть поисковый запрос, перестраиваем дерево локально из отфильтрованных позиций
+    if (searchQuery && searchQuery.trim()) {
+      if (selectedTreeId && selectedTreeId !== '') {
+        rebuildTreeStructureLocally(selectedTreeId);
+      } else {
+        rebuildFlatStructureLocally();
+      }
     } else {
-      rebuildFlatStructureLocally();
+      // Если поиска нет, используем стандартную логику
+      if (selectedTreeId && selectedTreeId !== '') {
+        // При изменении позиций перезагружаем структуру с сервера
+        loadTreeStructure(selectedTreeId);
+      } else {
+        rebuildFlatStructureLocally();
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [positions]);
+  }, [positions, searchQuery]);
 
-  // Применяем фильтр при изменении поискового запроса
+  // Применяем фильтр при изменении поискового запроса и перестраиваем дерево
   useEffect(() => {
     if (allPositionsRef.current.length > 0) {
       applySearchFilter(allPositionsRef.current, searchQuery);
+      
+      // Если есть поисковый запрос, перестраиваем дерево локально из отфильтрованных позиций
+      if (searchQuery && searchQuery.trim()) {
+        if (selectedTreeId && selectedTreeId !== '') {
+          rebuildTreeStructureLocally(selectedTreeId);
+        } else {
+          rebuildFlatStructureLocally();
+        }
+      } else {
+        // Если поиск очищен, перезагружаем дерево с сервера (для структурированного) или перестраиваем локально (для плоского)
+        if (selectedTreeId && selectedTreeId !== '') {
+          loadTreeStructure(selectedTreeId);
+        } else {
+          rebuildFlatStructureLocally();
+        }
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery]);

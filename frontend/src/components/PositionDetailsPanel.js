@@ -91,22 +91,6 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
             }
             
             customFieldsObj[fieldKey] = normalizedValue;
-            
-            // Также сохраняем привязанные значения как отдельные поля
-            // (для обратной совместимости и для возможности их редактирования)
-            if (item.linked_custom_fields && Array.isArray(item.linked_custom_fields)) {
-              item.linked_custom_fields.forEach(linkedField => {
-                if (linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
-                  linkedField.linked_custom_field_values.forEach(linkedVal => {
-                    const normalizedLinkedValue = linkedVal.linked_custom_field_value ? String(linkedVal.linked_custom_field_value).trim() : '';
-                    // Сохраняем только если поле еще не установлено
-                    if (normalizedLinkedValue && !customFieldsObj[linkedField.linked_custom_field_key]) {
-                      customFieldsObj[linkedField.linked_custom_field_key] = normalizedLinkedValue;
-                    }
-                  });
-                }
-              });
-            }
           } else {
             // Fallback: try to find field by matching value in allowed_values
             const fieldDef = customFields.find(f => {

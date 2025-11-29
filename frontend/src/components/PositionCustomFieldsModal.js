@@ -128,33 +128,6 @@ function PositionCustomFieldsModal({
                             
                             // Сохраняем значение (оно уже содержит тире, если есть привязанные поля)
                             onChangeValue(key, normalizedValue);
-                            
-                            // Если выбрано значение с привязанными полями, также добавляем их как отдельные поля
-                            // (для обратной совместимости и для возможности их редактирования)
-                            if (normalizedValue) {
-                              // Извлекаем основную часть для поиска в allowed_values
-                              const dashIndex = normalizedValue.indexOf(' - ');
-                              const mainValue = dashIndex >= 0 
-                                ? normalizedValue.substring(0, dashIndex).trim() 
-                                : normalizedValue;
-                              
-                              const selectedValObj = fieldDef.allowed_values.find(v => {
-                                const valStr = typeof v === 'string' ? v.trim() : String(v.value || '').trim();
-                                return valStr === mainValue;
-                              });
-                              
-                              if (selectedValObj && typeof selectedValObj === 'object' && selectedValObj.linked_custom_fields) {
-                                // Автоматически добавляем привязанные значения как отдельные поля
-                                selectedValObj.linked_custom_fields.forEach(linkedField => {
-                                  linkedField.linked_custom_field_values.forEach(linkedVal => {
-                                    const linkedKey = linkedField.linked_custom_field_key;
-                                    if (!customFieldsValues[linkedKey]) {
-                                      onChangeValue(linkedKey, String(linkedVal.linked_custom_field_value || '').trim());
-                                    }
-                                  });
-                                });
-                              }
-                            }
                           }}
                         >
                           <option value="">Выберите значение...</option>
