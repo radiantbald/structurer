@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -78,8 +79,7 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 							orConditions = append(orConditions,
 								`(name ILIKE $`+strconv.Itoa(argIndex)+` OR 
 								COALESCE(description, '') ILIKE $`+strconv.Itoa(argIndex)+` OR 
-								COALESCE(employee_full_name, '') ILIKE $`+strconv.Itoa(argIndex)+` OR
-								custom_fields::text ILIKE $`+strconv.Itoa(argIndex)+`)`)
+								COALESCE(employee_full_name, '') ILIKE $`+strconv.Itoa(argIndex)+`)`)
 							queryArgs = append(queryArgs, "%"+orPart+"%")
 							argIndex++
 						}
@@ -92,8 +92,7 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 						conditions = append(conditions,
 							`(name ILIKE $`+strconv.Itoa(argIndex)+` OR 
 							COALESCE(description, '') ILIKE $`+strconv.Itoa(argIndex)+` OR 
-							COALESCE(employee_full_name, '') ILIKE $`+strconv.Itoa(argIndex)+` OR
-							custom_fields::text ILIKE $`+strconv.Itoa(argIndex)+`)`)
+							COALESCE(employee_full_name, '') ILIKE $`+strconv.Itoa(argIndex)+`)`)
 						queryArgs = append(queryArgs, "%"+part+"%")
 						argIndex++
 					}
@@ -102,29 +101,28 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 
 			if len(conditions) > 0 {
 				whereClause := strings.Join(conditions, " AND ")
-				query = `SELECT id, name, description, custom_fields, employee_full_name, 
+				query = `SELECT id, name, description, custom_fields_ids, custom_fields_values_ids, employee_full_name, 
 					employee_external_id, employee_profile_url, created_at, updated_at
 					FROM positions WHERE ` + whereClause + ` ORDER BY id LIMIT $` + strconv.Itoa(argIndex) + ` OFFSET $` + strconv.Itoa(argIndex+1)
 				queryArgs = append(queryArgs, limit, offset)
 				args = queryArgs
 			} else {
-				query = `SELECT id, name, description, custom_fields, employee_full_name, 
+				query = `SELECT id, name, description, custom_fields_ids, custom_fields_values_ids, employee_full_name, 
 					employee_external_id, employee_profile_url, created_at, updated_at
 					FROM positions ORDER BY id LIMIT $1 OFFSET $2`
 				args = []interface{}{limit, offset}
 			}
 		} else {
 			// Simple search
-			query = `SELECT id, name, description, custom_fields, employee_full_name, 
+			query = `SELECT id, name, description, custom_fields_ids, custom_fields_values_ids, employee_full_name, 
 				employee_external_id, employee_profile_url, created_at, updated_at
 				FROM positions WHERE (name ILIKE $1 OR 
 				COALESCE(description, '') ILIKE $1 OR 
-				COALESCE(employee_full_name, '') ILIKE $1 OR
-				custom_fields::text ILIKE $1) ORDER BY id LIMIT $2 OFFSET $3`
+				COALESCE(employee_full_name, '') ILIKE $1) ORDER BY id LIMIT $2 OFFSET $3`
 			args = []interface{}{"%" + search + "%", limit, offset}
 		}
 	} else {
-		query = `SELECT id, name, description, custom_fields, employee_full_name, 
+		query = `SELECT id, name, description, custom_fields_ids, custom_fields_values_ids, employee_full_name, 
 			employee_external_id, employee_profile_url, created_at, updated_at
 			FROM positions ORDER BY id LIMIT $1 OFFSET $2`
 		args = []interface{}{limit, offset}
@@ -140,16 +138,20 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 	var positions []Position
 	for rows.Next() {
 		var p Position
-		var customFieldsJSON []byte
-		err := rows.Scan(&p.ID, &p.Name, &p.Description, &customFieldsJSON,
+		var customFieldsIDsJSON []byte
+		var customFieldsValuesIDsJSON []byte
+		err := rows.Scan(&p.ID, &p.Name, &p.Description, &customFieldsIDsJSON, &customFieldsValuesIDsJSON,
 			&p.EmployeeFullName, &p.EmployeeExternalID, &p.EmployeeProfileURL,
 			&p.CreatedAt, &p.UpdatedAt)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if customFieldsJSON != nil {
-			json.Unmarshal(customFieldsJSON, &p.CustomFields)
+		if customFieldsIDsJSON != nil {
+			json.Unmarshal(customFieldsIDsJSON, &p.CustomFieldsIDs)
+		}
+		if customFieldsValuesIDsJSON != nil {
+			json.Unmarshal(customFieldsValuesIDsJSON, &p.CustomFieldsValuesIDs)
 		}
 		positions = append(positions, p)
 	}
@@ -188,8 +190,7 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 							orConditions = append(orConditions,
 								`(name ILIKE $`+strconv.Itoa(argIndex)+` OR 
 								COALESCE(description, '') ILIKE $`+strconv.Itoa(argIndex)+` OR 
-								COALESCE(employee_full_name, '') ILIKE $`+strconv.Itoa(argIndex)+` OR
-								custom_fields::text ILIKE $`+strconv.Itoa(argIndex)+`)`)
+								COALESCE(employee_full_name, '') ILIKE $`+strconv.Itoa(argIndex)+`)`)
 							countArgs = append(countArgs, "%"+orPart+"%")
 							argIndex++
 						}
@@ -202,8 +203,7 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 						conditions = append(conditions,
 							`(name ILIKE $`+strconv.Itoa(argIndex)+` OR 
 							COALESCE(description, '') ILIKE $`+strconv.Itoa(argIndex)+` OR 
-							COALESCE(employee_full_name, '') ILIKE $`+strconv.Itoa(argIndex)+` OR
-							custom_fields::text ILIKE $`+strconv.Itoa(argIndex)+`)`)
+							COALESCE(employee_full_name, '') ILIKE $`+strconv.Itoa(argIndex)+`)`)
 						countArgs = append(countArgs, "%"+part+"%")
 						argIndex++
 					}
@@ -219,8 +219,7 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 		} else {
 			countQuery = `SELECT COUNT(*) FROM positions WHERE (name ILIKE $1 OR 
 				COALESCE(description, '') ILIKE $1 OR 
-				COALESCE(employee_full_name, '') ILIKE $1 OR
-				custom_fields::text ILIKE $1)`
+				COALESCE(employee_full_name, '') ILIKE $1)`
 			h.db.QueryRow(countQuery, "%"+search+"%").Scan(&total)
 		}
 	} else {
@@ -246,13 +245,14 @@ func (h *Handler) GetPosition(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var p Position
-	var customFieldsJSON []byte
+	var customFieldsIDsJSON []byte
+	var customFieldsValuesIDsJSON []byte
 	err = h.db.QueryRow(
-		`SELECT id, name, description, custom_fields, employee_full_name, 
+		`SELECT id, name, description, custom_fields_ids, custom_fields_values_ids, employee_full_name, 
 		employee_external_id, employee_profile_url, created_at, updated_at
 		FROM positions WHERE id = $1`,
 		id,
-	).Scan(&p.ID, &p.Name, &p.Description, &customFieldsJSON,
+	).Scan(&p.ID, &p.Name, &p.Description, &customFieldsIDsJSON, &customFieldsValuesIDsJSON,
 		&p.EmployeeFullName, &p.EmployeeExternalID, &p.EmployeeProfileURL,
 		&p.CreatedAt, &p.UpdatedAt)
 
@@ -265,12 +265,15 @@ func (h *Handler) GetPosition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if customFieldsJSON != nil {
-		json.Unmarshal(customFieldsJSON, &p.CustomFields)
+	if customFieldsIDsJSON != nil {
+		json.Unmarshal(customFieldsIDsJSON, &p.CustomFieldsIDs)
+	}
+	if customFieldsValuesIDsJSON != nil {
+		json.Unmarshal(customFieldsValuesIDsJSON, &p.CustomFieldsValuesIDs)
 	}
 
 	// Build nested custom_fields array
-	customFieldsArray, err := h.buildCustomFieldsArray(p.CustomFields)
+	customFieldsArray, err := h.buildCustomFieldsArrayFromIDs(p.CustomFieldsIDs, p.CustomFieldsValuesIDs)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -293,34 +296,396 @@ func (h *Handler) GetPosition(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
-	var p Position
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+	// Parse request body - can accept either nested structure or flat structure
+	var requestBody map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	customFieldsJSON, _ := json.Marshal(p.CustomFields)
+	// Extract basic fields
+	var name string
+	var description *string
+	var employeeFullName *string
+	var employeeExternalID *string
+	var employeeProfileURL *string
 
+	if n, ok := requestBody["name"].(string); ok {
+		name = n
+	}
+	if d, ok := requestBody["description"].(string); ok {
+		description = &d
+	} else if requestBody["description"] == nil {
+		description = nil
+	}
+	if efn, ok := requestBody["employee_full_name"].(string); ok {
+		employeeFullName = &efn
+	} else if requestBody["employee_full_name"] == nil {
+		employeeFullName = nil
+	}
+	if eid, ok := requestBody["employee_external_id"].(string); ok {
+		employeeExternalID = &eid
+	} else if requestBody["employee_external_id"] == nil {
+		employeeExternalID = nil
+	}
+	if epu, ok := requestBody["employee_profile_url"].(string); ok {
+		employeeProfileURL = &epu
+	} else if requestBody["employee_profile_url"] == nil {
+		employeeProfileURL = nil
+	}
+
+	// Process custom_fields - extract all value IDs
+	// New format: custom_fields is an array with structure:
+	// [
+	//   {
+	//     "custom_field_id": "uuid поля из таблицы custom_fields",
+	//     "custom_field_value_id": "uuid значения из таблицы custom_fields_values",
+	//     "linked_custom_fields": [
+	//       {
+	//         "linked_custom_field_values": [
+	//           {
+	//             "linked_custom_field_value_id": "uuid значения из таблицы custom_fields_values"
+	//           }
+	//         ]
+	//       }
+	//     ]
+	//   }
+	// ]
+	// Note: custom_field_value_id is stored in custom_fields_ids
+	//       linked_custom_field_value_id is stored in custom_fields_values_ids
+	customFieldsIDs := make([]uuid.UUID, 0)
+	customFieldsValuesIDs := make([]uuid.UUID, 0)
+	if customFieldsRaw, ok := requestBody["custom_fields"]; ok {
+		if customFieldsArray, ok := customFieldsRaw.([]interface{}); ok {
+			// Process each custom field
+			for _, cfItem := range customFieldsArray {
+				if cfMap, ok := cfItem.(map[string]interface{}); ok {
+					// Extract custom_field_value_id (ID значения из таблицы custom_fields_values)
+					// This is the value ID that should be stored in custom_fields_ids
+					if customFieldValueIDRaw, ok := cfMap["custom_field_value_id"]; ok {
+						if customFieldValueIDStr, ok := customFieldValueIDRaw.(string); ok && customFieldValueIDStr != "" {
+							// Parse custom_field_value_id as UUID and store it in custom_fields_ids
+							if valueID, err := uuid.Parse(customFieldValueIDStr); err == nil {
+								customFieldsIDs = append(customFieldsIDs, valueID)
+							}
+						}
+					}
+
+					// Process linked custom fields and extract their value IDs
+					if linkedFields, ok := cfMap["linked_custom_fields"].([]interface{}); ok {
+						for _, lfItem := range linkedFields {
+							if lfMap, ok := lfItem.(map[string]interface{}); ok {
+								if linkedValues, ok := lfMap["linked_custom_field_values"].([]interface{}); ok {
+									for _, lvItem := range linkedValues {
+										if lvMap, ok := lvItem.(map[string]interface{}); ok {
+											linkedValueID, _ := lvMap["linked_custom_field_value_id"].(string)
+											if linkedValueID != "" {
+												if valueID, err := uuid.Parse(linkedValueID); err == nil {
+													// Store linked value IDs in custom_fields_values_ids
+													customFieldsValuesIDs = append(customFieldsValuesIDs, valueID)
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	customFieldsIDsArray := UUIDArray(customFieldsIDs)
+	customFieldsIDsJSON, _ := json.Marshal(customFieldsIDsArray)
+
+	customFieldsValuesIDsArray := UUIDArray(customFieldsValuesIDs)
+	customFieldsValuesIDsJSON, _ := json.Marshal(customFieldsValuesIDsArray)
+
+	var positionID int64
 	err := h.db.QueryRow(
-		`INSERT INTO positions (name, description, custom_fields, employee_full_name, 
+		`INSERT INTO positions (name, description, custom_fields_ids, custom_fields_values_ids, employee_full_name, 
 		employee_external_id, employee_profile_url, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
 		RETURNING id`,
-		p.Name, p.Description, customFieldsJSON,
-		p.EmployeeFullName, p.EmployeeExternalID, p.EmployeeProfileURL,
-	).Scan(&p.ID)
+		name, description, customFieldsIDsJSON, customFieldsValuesIDsJSON,
+		employeeFullName, employeeExternalID, employeeProfileURL,
+	).Scan(&positionID)
 
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	// Get created position to return with nested custom_fields structure
+	var p Position
+	var customFieldsIDsFromDB []byte
+	var customFieldsValuesIDsFromDB []byte
+	err = h.db.QueryRow(
+		`SELECT id, name, description, custom_fields_ids, custom_fields_values_ids, employee_full_name, 
+		employee_external_id, employee_profile_url, created_at, updated_at
+		FROM positions WHERE id = $1`,
+		positionID,
+	).Scan(&p.ID, &p.Name, &p.Description, &customFieldsIDsFromDB, &customFieldsValuesIDsFromDB,
+		&p.EmployeeFullName, &p.EmployeeExternalID, &p.EmployeeProfileURL,
+		&p.CreatedAt, &p.UpdatedAt)
+
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if customFieldsIDsFromDB != nil {
+		json.Unmarshal(customFieldsIDsFromDB, &p.CustomFieldsIDs)
+	}
+	if customFieldsValuesIDsFromDB != nil {
+		json.Unmarshal(customFieldsValuesIDsFromDB, &p.CustomFieldsValuesIDs)
+	}
+
+	// Build nested custom_fields array
+	customFieldsArray, err := h.buildCustomFieldsArrayFromIDs(p.CustomFieldsIDs, p.CustomFieldsValuesIDs)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"id":                   p.ID,
+		"name":                 p.Name,
+		"description":          p.Description,
+		"custom_fields":        customFieldsArray,
+		"employee_full_name":   p.EmployeeFullName,
+		"employee_external_id": p.EmployeeExternalID,
+		"employee_profile_url": p.EmployeeProfileURL,
+		"created_at":           p.CreatedAt,
+		"updated_at":           p.UpdatedAt,
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(p)
+	json.NewEncoder(w).Encode(response)
+}
+
+// buildCustomFieldsArrayFromIDs builds the nested custom_fields array structure from array of value IDs
+// customFieldsValuesIDs contains the selected linked custom field value IDs (only selected ones)
+func (h *Handler) buildCustomFieldsArrayFromIDs(customFieldsIDs *UUIDArray, customFieldsValuesIDs *UUIDArray) ([]PositionCustomFieldValue, error) {
+	customFieldsArray := []PositionCustomFieldValue{}
+
+	if customFieldsIDs == nil || len(*customFieldsIDs) == 0 {
+		return customFieldsArray, nil
+	}
+
+	// Build a set of selected linked value IDs for filtering
+	selectedLinkedValueIDs := make(map[uuid.UUID]bool)
+	if customFieldsValuesIDs != nil {
+		for _, id := range *customFieldsValuesIDs {
+			selectedLinkedValueIDs[id] = true
+		}
+	}
+
+	// Pre-load all custom field definitions for linked fields lookup
+	allFieldsRows, err := h.db.Query(`SELECT id, key, label FROM custom_fields`)
+	if err != nil {
+		return nil, err
+	}
+	fieldInfoMap := make(map[uuid.UUID]struct {
+		Key   string
+		Label string
+	})
+	for allFieldsRows.Next() {
+		var fieldID uuid.UUID
+		var key, label string
+		if err := allFieldsRows.Scan(&fieldID, &key, &label); err == nil {
+			fieldInfoMap[fieldID] = struct {
+				Key   string
+				Label string
+			}{Key: key, Label: label}
+		}
+	}
+	allFieldsRows.Close()
+
+	// Pre-load all custom field values for linked values lookup
+	allValuesRows, err := h.db.Query(`SELECT id, value FROM custom_fields_values`)
+	if err != nil {
+		return nil, err
+	}
+	valueInfoMap := make(map[uuid.UUID]string)
+	for allValuesRows.Next() {
+		var valueID uuid.UUID
+		var value string
+		if err := allValuesRows.Scan(&valueID, &value); err == nil {
+			valueInfoMap[valueID] = value
+		}
+	}
+	allValuesRows.Close()
+
+	// Pre-load field-to-values mapping (which values belong to which fields)
+	fieldToValuesMap := make(map[uuid.UUID]map[uuid.UUID]bool)
+	fieldsForMappingRows, err := h.db.Query(`SELECT id, allowed_values_ids FROM custom_fields WHERE allowed_values_ids IS NOT NULL`)
+	if err == nil {
+		for fieldsForMappingRows.Next() {
+			var fieldID uuid.UUID
+			var allowedValueIDsJSON []byte
+			if err := fieldsForMappingRows.Scan(&fieldID, &allowedValueIDsJSON); err == nil {
+				var ids []string
+				if err := json.Unmarshal(allowedValueIDsJSON, &ids); err == nil {
+					valueSet := make(map[uuid.UUID]bool)
+					for _, idStr := range ids {
+						if id, err := uuid.Parse(idStr); err == nil {
+							valueSet[id] = true
+						}
+					}
+					fieldToValuesMap[fieldID] = valueSet
+				}
+			}
+		}
+		fieldsForMappingRows.Close()
+	}
+
+	// Load all custom field definitions
+	rows, err := h.db.Query(
+		`SELECT id, key, label, allowed_values_ids, created_at, updated_at
+		FROM custom_fields`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Build a map of custom field definitions by ID and by allowed values
+	fieldDefsByID := make(map[uuid.UUID]CustomFieldDefinition)
+	valueToFieldMap := make(map[uuid.UUID]uuid.UUID) // Maps value ID to field ID
+	for rows.Next() {
+		var f CustomFieldDefinition
+		var allowedValueIDsJSON []byte
+		err := rows.Scan(&f.ID, &f.Key, &f.Label, &allowedValueIDsJSON,
+			&f.CreatedAt, &f.UpdatedAt)
+		if err != nil {
+			return nil, err
+		}
+		fieldDefsByID[f.ID] = f
+
+		// Map each allowed value to this field
+		if allowedValueIDsJSON != nil {
+			var ids []string
+			if err := json.Unmarshal(allowedValueIDsJSON, &ids); err == nil {
+				for _, idStr := range ids {
+					if valueID, err := uuid.Parse(idStr); err == nil {
+						valueToFieldMap[valueID] = f.ID
+					}
+				}
+			}
+		}
+	}
+
+	// Process each value ID from the position
+	processedFields := make(map[uuid.UUID]bool) // Track which fields we've already processed
+	for _, valueID := range *customFieldsIDs {
+		// Find which field this value belongs to
+		fieldID, exists := valueToFieldMap[valueID]
+		if !exists {
+			continue // Skip if value doesn't belong to any field
+		}
+
+		// Skip if we've already processed this field (take first value for each field)
+		if processedFields[fieldID] {
+			continue
+		}
+		processedFields[fieldID] = true
+
+		fieldDef := fieldDefsByID[fieldID]
+		valueText := valueInfoMap[valueID]
+
+		// Build linked custom fields structure from custom_fields_values
+		linkedFields := []LinkedCustomField{}
+		var linkedCustomFieldIDsJSON []byte
+		var linkedCustomFieldValueIDsJSON []byte
+		err := h.db.QueryRow(
+			`SELECT linked_custom_fields_ids, linked_custom_fields_values_ids
+			FROM custom_fields_values WHERE id = $1`,
+			valueID,
+		).Scan(&linkedCustomFieldIDsJSON, &linkedCustomFieldValueIDsJSON)
+
+		if err == nil && linkedCustomFieldIDsJSON != nil && linkedCustomFieldValueIDsJSON != nil {
+			var linkedFieldIDs []string
+			var linkedValueIDs []string
+
+			if err := json.Unmarshal(linkedCustomFieldIDsJSON, &linkedFieldIDs); err == nil {
+				if err := json.Unmarshal(linkedCustomFieldValueIDsJSON, &linkedValueIDs); err == nil {
+					// Parse all linked field IDs
+					linkedFieldUUIDs := make([]uuid.UUID, 0, len(linkedFieldIDs))
+					for _, idStr := range linkedFieldIDs {
+						if id, err := uuid.Parse(idStr); err == nil {
+							linkedFieldUUIDs = append(linkedFieldUUIDs, id)
+						}
+					}
+
+					// Parse all linked value IDs
+					linkedValueUUIDs := make([]uuid.UUID, 0, len(linkedValueIDs))
+					for _, idStr := range linkedValueIDs {
+						if id, err := uuid.Parse(idStr); err == nil {
+							linkedValueUUIDs = append(linkedValueUUIDs, id)
+						}
+					}
+
+					// For each linked field, find which values belong to it
+					for _, linkedFieldID := range linkedFieldUUIDs {
+						fieldInfo, fieldExists := fieldInfoMap[linkedFieldID]
+						if !fieldExists {
+							continue
+						}
+
+						// Find values that belong to this field
+						fieldValueSet, hasValues := fieldToValuesMap[linkedFieldID]
+						if !hasValues {
+							continue
+						}
+
+						var linkedFieldValues []LinkedCustomFieldValue
+						for _, linkedValueID := range linkedValueUUIDs {
+							// Check if this value belongs to the linked field
+							// AND if it's in the selected linked values (custom_fields_values_ids)
+							if fieldValueSet[linkedValueID] && selectedLinkedValueIDs[linkedValueID] {
+								// Get the value text from pre-loaded map
+								if linkedValueText, exists := valueInfoMap[linkedValueID]; exists {
+									linkedFieldValues = append(linkedFieldValues, LinkedCustomFieldValue{
+										LinkedCustomFieldValueID: linkedValueID,
+										LinkedCustomFieldValue:   linkedValueText,
+									})
+								}
+							}
+						}
+
+						if len(linkedFieldValues) > 0 {
+							linkedFields = append(linkedFields, LinkedCustomField{
+								LinkedCustomFieldID:     linkedFieldID,
+								LinkedCustomFieldKey:    fieldInfo.Key,
+								LinkedCustomFieldLabel:  fieldInfo.Label,
+								LinkedCustomFieldValues: linkedFieldValues,
+							})
+						}
+					}
+				}
+			}
+		}
+
+		valueItem := PositionCustomFieldValue{
+			CustomFieldID:    fieldDef.ID.String(),
+			CustomFieldKey:   fieldDef.Key,
+			CustomFieldLabel: fieldDef.Label,
+			CustomFieldValue: valueText,
+		}
+		if len(linkedFields) > 0 {
+			valueItem.LinkedCustomFields = linkedFields
+		}
+		customFieldsArray = append(customFieldsArray, valueItem)
+	}
+
+	return customFieldsArray, nil
 }
 
 // buildCustomFieldsArray builds the nested custom_fields array structure from flat JSONB
+// DEPRECATED: Use buildCustomFieldsArrayFromIDs instead
 func (h *Handler) buildCustomFieldsArray(customFieldsJSON JSONB) ([]PositionCustomFieldValue, error) {
 	customFieldsArray := []PositionCustomFieldValue{}
 
@@ -618,49 +983,66 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 		employeeProfileURL = nil
 	}
 
-	// Process custom_fields - can be either nested array or flat object
-	customFieldsJSON := make(JSONB)
+	// Process custom_fields - extract all value IDs
+	// New format: custom_fields is an array with structure:
+	// [
+	//   {
+	//     "custom_field_id": "uuid поля из таблицы custom_fields",
+	//     "custom_field_value_id": "uuid значения из таблицы custom_fields_values",
+	//     "linked_custom_fields": [
+	//       {
+	//         "linked_custom_field_values": [
+	//           {
+	//             "linked_custom_field_value_id": "uuid значения из таблицы custom_fields_values"
+	//           }
+	//         ]
+	//       }
+	//     ]
+	//   }
+	// ]
+	// Note: custom_field_value_id is stored in custom_fields_ids
+	//       linked_custom_field_value_id is stored in custom_fields_values_ids
+	customFieldsIDs := make([]uuid.UUID, 0)
+	customFieldsValuesIDs := make([]uuid.UUID, 0)
 	if customFieldsRaw, ok := requestBody["custom_fields"]; ok {
 		if customFieldsArray, ok := customFieldsRaw.([]interface{}); ok {
-			// Nested structure: array of PositionCustomFieldValue
-			for _, cfItem := range customFieldsArray {
+			log.Printf("[UpdatePosition] Processing custom_fields array with %d items", len(customFieldsArray))
+			// Process each custom field
+			for i, cfItem := range customFieldsArray {
 				if cfMap, ok := cfItem.(map[string]interface{}); ok {
-					customFieldKey, _ := cfMap["custom_field_key"].(string)
-
-					if customFieldKey != "" {
-						// Extract custom_field_value - should be a string
-						if customFieldValueRaw, ok := cfMap["custom_field_value"]; ok {
-							if customFieldValueStr, ok := customFieldValueRaw.(string); ok && customFieldValueStr != "" {
-								// Store the value (can be either UUID string or text)
-								customFieldsJSON[customFieldKey] = customFieldValueStr
+					log.Printf("[UpdatePosition] Processing custom field item %d: %+v", i, cfMap)
+					// Extract custom_field_value_id (ID значения из таблицы custom_fields_values)
+					// This is the value ID that should be stored in custom_fields_ids
+					if customFieldValueIDRaw, ok := cfMap["custom_field_value_id"]; ok {
+						log.Printf("[UpdatePosition] Found custom_field_value_id: %v (type: %T)", customFieldValueIDRaw, customFieldValueIDRaw)
+						if customFieldValueIDStr, ok := customFieldValueIDRaw.(string); ok && customFieldValueIDStr != "" {
+							log.Printf("[UpdatePosition] Parsing custom_field_value_id as UUID: %s", customFieldValueIDStr)
+							// Parse custom_field_value_id as UUID and store it in custom_fields_ids
+							if valueID, err := uuid.Parse(customFieldValueIDStr); err == nil {
+								log.Printf("[UpdatePosition] Successfully parsed UUID: %s, adding to customFieldsIDs", valueID.String())
+								customFieldsIDs = append(customFieldsIDs, valueID)
+							} else {
+								log.Printf("[UpdatePosition] Error parsing UUID: %v", err)
 							}
+						} else {
+							log.Printf("[UpdatePosition] custom_field_value_id is not a valid string or is empty: %v", customFieldValueIDRaw)
 						}
+					} else {
+						log.Printf("[UpdatePosition] custom_field_value_id not found in custom field item %d", i)
+					}
 
-						// Process linked custom fields and set their values
-						if linkedFields, ok := cfMap["linked_custom_fields"].([]interface{}); ok {
-							for _, lfItem := range linkedFields {
-								if lfMap, ok := lfItem.(map[string]interface{}); ok {
-									linkedFieldKey, _ := lfMap["linked_custom_field_key"].(string)
-
-									// Process linked custom field values
-									if linkedValues, ok := lfMap["linked_custom_field_values"].([]interface{}); ok {
-										for _, lvItem := range linkedValues {
-											if lvMap, ok := lvItem.(map[string]interface{}); ok {
-												linkedValueID, _ := lvMap["linked_custom_field_value_id"].(string)
-												linkedValue, _ := lvMap["linked_custom_field_value"].(string)
-
-												// Set the linked field value (prefer value_id if available, otherwise use value text)
-												if linkedFieldKey != "" {
-													if linkedValueID != "" {
-														// Try to parse as UUID, if valid use it, otherwise use the string
-														if _, err := uuid.Parse(linkedValueID); err == nil {
-															customFieldsJSON[linkedFieldKey] = linkedValueID
-														} else {
-															customFieldsJSON[linkedFieldKey] = linkedValue
-														}
-													} else if linkedValue != "" {
-														customFieldsJSON[linkedFieldKey] = linkedValue
-													}
+					// Process linked custom fields and extract their value IDs
+					if linkedFields, ok := cfMap["linked_custom_fields"].([]interface{}); ok {
+						for _, lfItem := range linkedFields {
+							if lfMap, ok := lfItem.(map[string]interface{}); ok {
+								if linkedValues, ok := lfMap["linked_custom_field_values"].([]interface{}); ok {
+									for _, lvItem := range linkedValues {
+										if lvMap, ok := lvItem.(map[string]interface{}); ok {
+											linkedValueID, _ := lvMap["linked_custom_field_value_id"].(string)
+											if linkedValueID != "" {
+												if valueID, err := uuid.Parse(linkedValueID); err == nil {
+													// Store linked value IDs in custom_fields_values_ids
+													customFieldsValuesIDs = append(customFieldsValuesIDs, valueID)
 												}
 											}
 										}
@@ -671,25 +1053,34 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-		} else if customFieldsMap, ok := customFieldsRaw.(map[string]interface{}); ok {
-			// Flat structure: object with field_key -> value mapping
-			for k, v := range customFieldsMap {
-				if strVal, ok := v.(string); ok {
-					customFieldsJSON[k] = strVal
-				}
-			}
 		}
 	}
 
-	customFieldsJSONBytes, _ := json.Marshal(customFieldsJSON)
+	log.Printf("[UpdatePosition] Final customFieldsIDs count: %d, IDs: %v", len(customFieldsIDs), customFieldsIDs)
+	log.Printf("[UpdatePosition] Final customFieldsValuesIDs count: %d, IDs: %v", len(customFieldsValuesIDs), customFieldsValuesIDs)
 
-	_, err = h.db.Exec(
-		`UPDATE positions SET name = $1, description = $2, custom_fields = $3, 
-		employee_full_name = $4, employee_external_id = $5, employee_profile_url = $6, 
-		updated_at = NOW() WHERE id = $7`,
-		name, description, customFieldsJSONBytes,
+	customFieldsIDsArray := UUIDArray(customFieldsIDs)
+	customFieldsIDsJSON, _ := json.Marshal(customFieldsIDsArray)
+	log.Printf("[UpdatePosition] customFieldsIDsJSON: %s", string(customFieldsIDsJSON))
+
+	customFieldsValuesIDsArray := UUIDArray(customFieldsValuesIDs)
+	customFieldsValuesIDsJSON, _ := json.Marshal(customFieldsValuesIDsArray)
+	log.Printf("[UpdatePosition] customFieldsValuesIDsJSON: %s", string(customFieldsValuesIDsJSON))
+
+	result, err := h.db.Exec(
+		`UPDATE positions SET name = $1, description = $2, custom_fields_ids = $3, custom_fields_values_ids = $4, 
+		employee_full_name = $5, employee_external_id = $6, employee_profile_url = $7, 
+		updated_at = NOW() WHERE id = $8`,
+		name, description, customFieldsIDsJSON, customFieldsValuesIDsJSON,
 		employeeFullName, employeeExternalID, employeeProfileURL, id,
 	)
+
+	if err != nil {
+		log.Printf("[UpdatePosition] Error updating position: %v", err)
+	} else {
+		rowsAffected, _ := result.RowsAffected()
+		log.Printf("[UpdatePosition] Successfully updated position %d, rows affected: %d", id, rowsAffected)
+	}
 
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -698,13 +1089,14 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 
 	// Get updated position to return with nested custom_fields structure
 	var p Position
-	var customFieldsJSONFromDB []byte
+	var customFieldsIDsFromDB []byte
+	var customFieldsValuesIDsFromDB []byte
 	err = h.db.QueryRow(
-		`SELECT id, name, description, custom_fields, employee_full_name, 
+		`SELECT id, name, description, custom_fields_ids, custom_fields_values_ids, employee_full_name, 
 		employee_external_id, employee_profile_url, created_at, updated_at
 		FROM positions WHERE id = $1`,
 		id,
-	).Scan(&p.ID, &p.Name, &p.Description, &customFieldsJSONFromDB,
+	).Scan(&p.ID, &p.Name, &p.Description, &customFieldsIDsFromDB, &customFieldsValuesIDsFromDB,
 		&p.EmployeeFullName, &p.EmployeeExternalID, &p.EmployeeProfileURL,
 		&p.CreatedAt, &p.UpdatedAt)
 
@@ -713,12 +1105,15 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if customFieldsJSONFromDB != nil {
-		json.Unmarshal(customFieldsJSONFromDB, &p.CustomFields)
+	if customFieldsIDsFromDB != nil {
+		json.Unmarshal(customFieldsIDsFromDB, &p.CustomFieldsIDs)
+	}
+	if customFieldsValuesIDsFromDB != nil {
+		json.Unmarshal(customFieldsValuesIDsFromDB, &p.CustomFieldsValuesIDs)
 	}
 
 	// Build nested custom_fields array
-	customFieldsArray, err := h.buildCustomFieldsArray(p.CustomFields)
+	customFieldsArray, err := h.buildCustomFieldsArrayFromIDs(p.CustomFieldsIDs, p.CustomFieldsValuesIDs)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1218,13 +1613,38 @@ func (h *Handler) DeleteCustomField(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	// Remove the custom field key from all positions' custom_fields JSONB
-	_, err = tx.Exec(
-		`UPDATE positions 
-		SET custom_fields = custom_fields - $1, updated_at = NOW()
-		WHERE custom_fields ? $1`,
-		fieldKey,
-	)
+	// Get allowed_values_ids for this field to remove them from positions
+	var allowedValueIDsJSON []byte
+	err = tx.QueryRow(
+		`SELECT allowed_values_ids FROM custom_fields WHERE id = $1`,
+		id,
+	).Scan(&allowedValueIDsJSON)
+
+	if err == nil && allowedValueIDsJSON != nil {
+		var valueIDs []string
+		if err := json.Unmarshal(allowedValueIDsJSON, &valueIDs); err == nil && len(valueIDs) > 0 {
+			// Build JSONB array of value IDs to remove
+			valueIDsJSON, _ := json.Marshal(valueIDs)
+
+			// Remove all value IDs that belong to this field from all positions
+			// Remove each value ID from the custom_fields_ids array
+			_, err = tx.Exec(
+				`UPDATE positions 
+				SET custom_fields_ids = (
+					SELECT COALESCE(jsonb_agg(elem), '[]'::jsonb)
+					FROM jsonb_array_elements_text(custom_fields_ids) AS elem
+					WHERE elem NOT IN (SELECT jsonb_array_elements_text($1::jsonb))
+				), updated_at = NOW()
+				WHERE custom_fields_ids ?| $2`,
+				valueIDsJSON,
+				valueIDs,
+			)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

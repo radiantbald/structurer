@@ -10,15 +10,16 @@ import (
 
 // Position represents a job position
 type Position struct {
-	ID                   int64           `json:"id" db:"id"`
-	Name                 string          `json:"name" db:"name"`
-	Description          *string         `json:"description" db:"description"`
-	CustomFields         JSONB           `json:"custom_fields" db:"custom_fields"`
-	EmployeeFullName     *string         `json:"employee_full_name" db:"employee_full_name"`
-	EmployeeExternalID   *string         `json:"employee_external_id" db:"employee_external_id"`
-	EmployeeProfileURL   *string         `json:"employee_profile_url" db:"employee_profile_url"`
-	CreatedAt            time.Time       `json:"created_at" db:"created_at"`
-	UpdatedAt            time.Time       `json:"updated_at" db:"updated_at"`
+	ID                      int64           `json:"id" db:"id"`
+	Name                    string          `json:"name" db:"name"`
+	Description             *string         `json:"description" db:"description"`
+	CustomFieldsIDs         *UUIDArray      `json:"custom_fields" db:"custom_fields_ids"` // Stored as array of UUIDs in DB, returned as custom_fields in JSON
+	CustomFieldsValuesIDs   *UUIDArray      `json:"-" db:"custom_fields_values_ids"` // Stored as array of UUIDs in DB
+	EmployeeFullName        *string         `json:"employee_full_name" db:"employee_full_name"`
+	EmployeeExternalID      *string         `json:"employee_external_id" db:"employee_external_id"`
+	EmployeeProfileURL      *string         `json:"employee_profile_url" db:"employee_profile_url"`
+	CreatedAt               time.Time       `json:"created_at" db:"created_at"`
+	UpdatedAt               time.Time       `json:"updated_at" db:"updated_at"`
 }
 
 // LinkedCustomFieldValue represents a linked custom field value

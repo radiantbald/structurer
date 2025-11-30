@@ -151,65 +151,110 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
         return; // Пропускаем поля без определения
       }
 
-      // Создаем базовую структуру поля
-      const customFieldItem = {
-        custom_field_id: fieldDef.id,
-        custom_field_key: fieldDef.key,
-        custom_field_label: fieldDef.label,
-        custom_field_value: fieldValue.trim()
-      };
-
       // Ищем выбранное значение в allowed_values
       let selectedValue = null;
       if (fieldDef.allowed_values && Array.isArray(fieldDef.allowed_values)) {
+        const searchValue = String(fieldValue).trim();
+        
+        // Сначала пытаемся найти по точному совпадению значения
         selectedValue = fieldDef.allowed_values.find(av => {
+          if (!av) return false;
+          
           const value = av.value ? String(av.value).trim() : '';
-          const valueId = av.value_id ? String(av.value_id).trim() : '';
-          const searchValue = String(fieldValue).trim();
+          // value_id может быть строкой или UUID объектом
+          const valueId = av.value_id 
+            ? (typeof av.value_id === 'string' ? av.value_id.trim() : String(av.value_id))
+            : '';
           
           // Сравниваем по значению или по value_id
-          return value === searchValue || valueId === searchValue;
+          const matches = value === searchValue || valueId === searchValue;
+          return matches;
         });
+        
+        // Если не найдено по точному совпадению, пробуем найти по частичному совпадению
+        // (на случай, если значение было сохранено с дополнительными символами)
+        if (!selectedValue && searchValue) {
+          selectedValue = fieldDef.allowed_values.find(av => {
+            if (!av) return false;
+            const value = av.value ? String(av.value).trim() : '';
+            // Проверяем, содержит ли значение searchValue или наоборот
+            return value.includes(searchValue) || searchValue.includes(value);
+          });
+        }
+      }
+
+      // Новый формат: custom_field_id (ID поля) и custom_field_value_id (ID значения)
+      const customFieldItem = {
+        custom_field_id: fieldDef.id
+      };
+      
+      // Добавляем ID выбранного значения, если оно найдено
+      if (selectedValue) {
+        // value_id может быть строкой или UUID объектом, преобразуем в строку
+        let valueId = null;
+        if (selectedValue.value_id) {
+          valueId = typeof selectedValue.value_id === 'string' 
+            ? selectedValue.value_id.trim() 
+            : String(selectedValue.value_id);
+        }
+        
+        if (valueId && valueId.length > 0) {
+          customFieldItem.custom_field_value_id = valueId;
+        } else {
+          // Если value_id не найден, но значение найдено, логируем предупреждение
+          console.warn(`Value found for field ${fieldKey} but value_id is missing`, selectedValue);
+        }
+      } else {
+        // Если значение не найдено, но fieldValue есть, логируем для отладки
+        if (fieldValue && fieldValue.trim()) {
+          console.warn(`Value not found for field ${fieldKey} with value "${fieldValue}". Available values:`, 
+            fieldDef.allowed_values?.map(av => ({ value: av.value, value_id: av.value_id })));
+        }
       }
 
       // Если найдено значение с linked_custom_fields, добавляем их
+      // Новый формат: только linked_custom_field_values с linked_custom_field_value_id
       if (selectedValue && selectedValue.linked_custom_fields && Array.isArray(selectedValue.linked_custom_fields)) {
-        const linkedFields = selectedValue.linked_custom_fields.map(linkedField => {
-          // Собираем только те значения, которые установлены в позиции
-          const linkedFieldValues = [];
+        // Собираем все значения всех связанных полей в один массив
+        const allLinkedFieldValues = [];
+        
+        selectedValue.linked_custom_fields.forEach(linkedField => {
+          const linkedFieldKey = linkedField.linked_custom_field_key;
+          const linkedValueInPosition = customFieldsObj[linkedFieldKey];
           
-          if (linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
+          if (linkedValueInPosition && linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
+            // Проходим по всем возможным значениям связанного поля
             linkedField.linked_custom_field_values.forEach(linkedVal => {
-              // Проверяем, установлено ли это значение в позиции
-              const linkedFieldKey = linkedField.linked_custom_field_key;
-              const linkedValueInPosition = customFieldsObj[linkedFieldKey];
+              const linkedValueText = linkedVal.linked_custom_field_value ? String(linkedVal.linked_custom_field_value).trim() : '';
+              const linkedValueId = linkedVal.linked_custom_field_value_id 
+                ? (typeof linkedVal.linked_custom_field_value_id === 'string' 
+                    ? linkedVal.linked_custom_field_value_id.trim() 
+                    : String(linkedVal.linked_custom_field_value_id))
+                : '';
+              const positionValue = String(linkedValueInPosition).trim();
               
-              if (linkedValueInPosition) {
-                const linkedValueText = linkedVal.linked_custom_field_value ? String(linkedVal.linked_custom_field_value).trim() : '';
-                const linkedValueId = linkedVal.linked_custom_field_value_id ? String(linkedVal.linked_custom_field_value_id).trim() : '';
-                const positionValue = String(linkedValueInPosition).trim();
-                
-                // Сравниваем по значению или по value_id
-                if (linkedValueText === positionValue || linkedValueId === positionValue) {
-                  linkedFieldValues.push({
-                    linked_custom_field_value_id: linkedVal.linked_custom_field_value_id,
-                    linked_custom_field_value: linkedVal.linked_custom_field_value
+              // Сравниваем по значению или по value_id
+              if (linkedValueText === positionValue || linkedValueId === positionValue) {
+                // Добавляем только linked_custom_field_value_id
+                if (linkedValueId && linkedValueId.length > 0) {
+                  allLinkedFieldValues.push({
+                    linked_custom_field_value_id: linkedValueId
                   });
                 }
               }
             });
           }
+        });
 
-          return {
-            linked_custom_field_id: linkedField.linked_custom_field_id,
-            linked_custom_field_key: linkedField.linked_custom_field_key,
-            linked_custom_field_label: linkedField.linked_custom_field_label,
-            linked_custom_field_values: linkedFieldValues
-          };
-        }).filter(linkedField => linkedField.linked_custom_field_values.length > 0);
-
-        if (linkedFields.length > 0) {
-          customFieldItem.linked_custom_fields = linkedFields;
+        // Если есть значения, создаем структуру linked_custom_fields
+        if (allLinkedFieldValues.length > 0) {
+          // По формату: массив объектов, каждый с linked_custom_field_values
+          // Группируем все значения в один объект
+          customFieldItem.linked_custom_fields = [
+            {
+              linked_custom_field_values: allLinkedFieldValues
+            }
+          ];
         }
       }
 
@@ -222,9 +267,18 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
   const handleSave = async (positionData) => {
     try {
       // Преобразуем custom_fields из объекта в массив с правильной структурой
+      const customFieldsArray = convertCustomFieldsToArray(positionData.custom_fields);
+      
+      // Отладочное логирование
+      console.log('Converting custom_fields:', {
+        input: positionData.custom_fields,
+        output: customFieldsArray,
+        customFields: customFields
+      });
+      
       const dataToSend = {
         ...positionData,
-        custom_fields: convertCustomFieldsToArray(positionData.custom_fields)
+        custom_fields: customFieldsArray
       };
 
       let savedPositionId = null;

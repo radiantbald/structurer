@@ -126,8 +126,49 @@ function PositionCustomFieldsModal({
                             // Значение уже содержит тире, если есть привязанные поля (из value атрибута опции)
                             const normalizedValue = selectedValue.trim();
                             
-                            // Сохраняем значение (оно уже содержит тире, если есть привязанные поля)
-                            onChangeValue(key, normalizedValue);
+                            // Извлекаем основное значение (до первого тире, если есть)
+                            const mainValue = normalizedValue.includes(' - ') 
+                              ? normalizedValue.substring(0, normalizedValue.indexOf(' - ')).trim()
+                              : normalizedValue;
+                            
+                            // Сохраняем основное значение поля
+                            onChangeValue(key, mainValue);
+                            
+                            // Если выбрано значение с прилинкованными полями, извлекаем и сохраняем их значения отдельно
+                            if (normalizedValue && normalizedValue.includes(' - ') && fieldDef.allowed_values) {
+                              // Извлекаем прилинкованные значения из выбранной строки (части после первого тире)
+                              const linkedParts = normalizedValue.substring(normalizedValue.indexOf(' - ') + 3).split(' - ');
+                              
+                              // Находим выбранное значение в allowed_values
+                              const selectedValueObj = fieldDef.allowed_values.find(v => {
+                                const valStr = typeof v === 'string' ? v.trim() : String(v.value || '').trim();
+                                return valStr === mainValue;
+                              });
+                              
+                              // Если найдено значение с прилинкованными полями, сохраняем только выбранные значения
+                              if (selectedValueObj && typeof selectedValueObj === 'object' && selectedValueObj.linked_custom_fields) {
+                                selectedValueObj.linked_custom_fields.forEach(linkedField => {
+                                  if (linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
+                                    const linkedFieldKey = linkedField.linked_custom_field_key;
+                                    if (linkedFieldKey) {
+                                      // Ищем значение прилинкованного поля, которое присутствует в выбранной строке
+                                      for (const linkedVal of linkedField.linked_custom_field_values) {
+                                        const linkedValueText = linkedVal.linked_custom_field_value 
+                                          ? String(linkedVal.linked_custom_field_value).trim() 
+                                          : '';
+                                        
+                                        // Проверяем, присутствует ли это значение в выбранной строке
+                                        if (linkedValueText && linkedParts.includes(linkedValueText)) {
+                                          // Сохраняем значение прилинкованного поля
+                                          onChangeValue(linkedFieldKey, linkedValueText);
+                                          break; // Берем первое совпадающее значение
+                                        }
+                                      }
+                                    }
+                                  }
+                                });
+                              }
+                            }
                           }}
                         >
                           <option value="">Выберите значение...</option>

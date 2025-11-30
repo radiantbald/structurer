@@ -49,9 +49,63 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 		return structure
 	}
 
+	// Pre-load field-to-values mapping (which values belong to which fields)
+	fieldToValuesMap := make(map[uuid.UUID]map[uuid.UUID]bool)
+	fieldInfoMap := make(map[uuid.UUID]struct {
+		Key   string
+		Label string
+	})
+	fieldsRows, _ := db.Query(`SELECT id, key, label, allowed_values_ids FROM custom_fields WHERE allowed_values_ids IS NOT NULL`)
+	if fieldsRows != nil {
+		for fieldsRows.Next() {
+			var fieldID uuid.UUID
+			var key, label string
+			var allowedValueIDsJSON []byte
+			if err := fieldsRows.Scan(&fieldID, &key, &label, &allowedValueIDsJSON); err == nil {
+				fieldInfoMap[fieldID] = struct {
+					Key   string
+					Label string
+				}{Key: key, Label: label}
+				var ids []string
+				if err := json.Unmarshal(allowedValueIDsJSON, &ids); err == nil {
+					valueSet := make(map[uuid.UUID]bool)
+					for _, idStr := range ids {
+						if id, err := uuid.Parse(idStr); err == nil {
+							valueSet[id] = true
+						}
+					}
+					fieldToValuesMap[fieldID] = valueSet
+				}
+			}
+		}
+		fieldsRows.Close()
+	}
+
+	// Pre-load all custom field values
+	valueInfoMap := make(map[uuid.UUID]string)
+	valuesRows, _ := db.Query(`SELECT id, value FROM custom_fields_values`)
+	if valuesRows != nil {
+		for valuesRows.Next() {
+			var valueID uuid.UUID
+			var value string
+			if err := valuesRows.Scan(&valueID, &value); err == nil {
+				valueInfoMap[valueID] = value
+			}
+		}
+		valuesRows.Close()
+	}
+
+	// Build value-to-field mapping
+	valueToFieldMap := make(map[uuid.UUID]uuid.UUID)
+	for fieldID, valueSet := range fieldToValuesMap {
+		for valueID := range valueSet {
+			valueToFieldMap[valueID] = fieldID
+		}
+	}
+
 	// Get all positions в порядке их создания (по id)
 	rows, _ := db.Query(
-		`SELECT id, name, custom_fields, employee_full_name FROM positions ORDER BY id`,
+		`SELECT id, name, custom_fields_ids, employee_full_name FROM positions ORDER BY id`,
 	)
 	defer rows.Close()
 
@@ -69,22 +123,33 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 			CustomFields   map[string]string
 			EmployeeFullName *string
 		}
-		var customFieldsJSON []byte
+		var customFieldsIDsJSON []byte
 		var employeeFullName sql.NullString
-		if err := rows.Scan(&p.ID, &p.Name, &customFieldsJSON, &employeeFullName); err == nil {
-			if customFieldsJSON != nil {
-				// Сначала читаем в map[string]interface{}, затем нормализуем в строки
-				var rawFields map[string]interface{}
-				if err := json.Unmarshal(customFieldsJSON, &rawFields); err == nil && rawFields != nil {
-					p.CustomFields = make(map[string]string, len(rawFields))
-					for k, v := range rawFields {
-						// Используем строковое представление для любых скалярных типов
-						p.CustomFields[k] = fmt.Sprint(v)
+		if err := rows.Scan(&p.ID, &p.Name, &customFieldsIDsJSON, &employeeFullName); err == nil {
+			p.CustomFields = make(map[string]string)
+			if customFieldsIDsJSON != nil {
+				// Parse array of UUID strings
+				var ids []string
+				if err := json.Unmarshal(customFieldsIDsJSON, &ids); err == nil {
+					// For each value ID, find which field it belongs to and get its value
+					for _, idStr := range ids {
+						if valueID, err := uuid.Parse(idStr); err == nil {
+							// Find which field this value belongs to
+							if fieldID, exists := valueToFieldMap[valueID]; exists {
+								// Get field key
+								if fieldInfo, exists := fieldInfoMap[fieldID]; exists {
+									// Get value text
+									if valueText, exists := valueInfoMap[valueID]; exists {
+										// Store first value for each field (take first occurrence)
+										if _, alreadySet := p.CustomFields[fieldInfo.Key]; !alreadySet {
+											p.CustomFields[fieldInfo.Key] = valueText
+										}
+									}
+								}
+							}
+						}
 					}
 				}
-			}
-			if p.CustomFields == nil {
-				p.CustomFields = make(map[string]string)
 			}
 			if employeeFullName.Valid && employeeFullName.String != "" {
 				p.EmployeeFullName = &employeeFullName.String
