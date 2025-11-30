@@ -1,0 +1,55 @@
+[
+    {
+        "id": "id кастомного поля", - из таблицы custom_fields
+        "key": "Ключ кастомного поля", - из таблицы custom_fields
+        "label": "Название кастомного поля", - из таблицы custom_fields
+        "allowed_values":
+        [
+            {
+                "value_id": "id значения кастомного поля", - из таблицы custom_fields
+                "value": "Значение кастомного поля", - из таблицы custom_fields_values
+                "linked_custom_fields": - из таблицы custom_fields_values
+                [
+                    {
+                        "linked_custom_field_id": "id привязанного кастомного поля", - из таблицы custom_fields
+                        "linked_custom_field_key": "Ключ привязанного кастомного поля", - из таблицы custom_fields
+                        "linked_custom_field_label": "Название привязанного кастомного поля", - из таблицы custom_fields
+                        "linked_custom_field_values":
+                        [
+                            {
+                                "linked_custom_field_value_id": "id значения привязанного кастомного поля", - из таблицы custom_fields_values
+                                "linked_custom_field_value": "Значение привязанного кастомного поля" - из таблицы custom_fields_values
+                            },
+                            {
+                                "linked_custom_field_value_id": "id значения привязанного кастомного поля", - из таблицы custom_fields_values
+                                "linked_custom_field_value": "Значение привязанного кастомного поля" - из таблицы custom_fields_values
+                            }
+                        ]
+                    },
+                    {
+                        "linked_custom_field_id": "id привязанного кастомного поля", - из таблицы custom_fields
+                        "linked_custom_field_key": "Ключ привязанного кастомного поля", - из таблицы custom_fields
+                        "linked_custom_field_label": "Название привязанного кастомного поля", - из таблицы custom_fields_values
+                        "linked_custom_field_values": - из таблицы custom_fields_values
+                        [
+                            {
+                                "linked_custom_field_value_id": "id значения привязанного кастомного поля", - из таблицы custom_fields_values
+                                "linked_custom_field_value": "Значение привязанного кастомного поля" - из таблицы custom_fields_values
+                            },
+                            {
+                                "linked_custom_field_value_id": "id значения привязанного кастомного поля", - из таблицы custom_fields_values
+                                "linked_custom_field_value": "Значение привязанного кастомного поля" - из таблицы custom_fields_values
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "value_id": "id значения кастомного поля", - из таблицы custom_fields
+                "value": "Значение кастомного поля" - из таблицы custom_fields_values
+            }
+        ],
+        "created_at": "2025-11-26T16:49:08.836164Z", - из таблицы custom_fields
+        "updated_at": "2025-11-28T20:40:28.829502Z" - из таблицы custom_fields
+    }
+]

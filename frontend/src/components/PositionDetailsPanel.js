@@ -57,56 +57,40 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
         : null;
       
       // Convert custom_fields array format to object format for PositionForm
-      // API returns array with structure: [{custom_field_key, value_id, value, linked_custom_fields}]
+      // API returns array with structure: [{custom_field_id, custom_field_key, custom_field_label, custom_field_value, linked_custom_fields}]
       // PositionForm expects object format: {field_key: value}
       if (Array.isArray(positionData.custom_fields)) {
         const customFieldsObj = {};
         positionData.custom_fields.forEach((item) => {
-          // Use custom_field_key if available, otherwise try to match by value
+          // Use custom_field_key if available
           const fieldKey = item.custom_field_key;
           
           if (fieldKey) {
             // Store value string (not value_id) to match select option values
             // Нормализуем значение, обрезая пробелы для точного совпадения
-            let normalizedValue = item.value ? String(item.value).trim() : '';
+            // НЕ объединяем значения через тире - используем только основное значение
+            let normalizedValue = item.custom_field_value ? String(item.custom_field_value).trim() : '';
             
-            // Если есть привязанные поля, объединяем их значения через тире
+            // Сохраняем основное значение без объединения
+            customFieldsObj[fieldKey] = normalizedValue;
+            
+            // Если есть привязанные поля, сохраняем их значения отдельно в объекте
             if (item.linked_custom_fields && Array.isArray(item.linked_custom_fields)) {
-              const linkedValues = [];
               item.linked_custom_fields.forEach(linkedField => {
-                if (linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
+                const linkedFieldKey = linkedField.linked_custom_field_key;
+                if (linkedFieldKey && linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
+                  // Берем все установленные значения из массива
                   linkedField.linked_custom_field_values.forEach(linkedVal => {
-                    const normalizedLinkedValue = linkedVal.linked_custom_field_value ? String(linkedVal.linked_custom_field_value).trim() : '';
-                    if (normalizedLinkedValue) {
-                      linkedValues.push(normalizedLinkedValue);
+                    if (linkedVal && linkedVal.linked_custom_field_value) {
+                      const linkedValue = String(linkedVal.linked_custom_field_value).trim();
+                      // Сохраняем значение связанного поля отдельно (если еще не установлено)
+                      if (linkedValue && !customFieldsObj[linkedFieldKey]) {
+                        customFieldsObj[linkedFieldKey] = linkedValue;
+                      }
                     }
                   });
                 }
               });
-              
-              // Объединяем основное значение с привязанными через тире
-              if (linkedValues.length > 0) {
-                normalizedValue = `${normalizedValue} - ${linkedValues.join(' - ')}`;
-              }
-            }
-            
-            customFieldsObj[fieldKey] = normalizedValue;
-          } else {
-            // Fallback: try to find field by matching value in allowed_values
-            const fieldDef = customFields.find(f => {
-              if (!f.allowed_values || !Array.isArray(f.allowed_values)) return false;
-              return f.allowed_values.some(av => {
-                const val = typeof av === 'string' ? av.trim() : String(av.value || '').trim();
-                const valId = typeof av === 'object' && av.value_id ? String(av.value_id).trim() : '';
-                const itemValue = item.value ? String(item.value).trim() : '';
-                const itemValueId = item.value_id ? String(item.value_id).trim() : '';
-                return valId === itemValueId || val === itemValue || val === itemValueId || valId === itemValue;
-              });
-            });
-            
-            if (fieldDef) {
-              const normalizedValue = item.value ? String(item.value).trim() : '';
-              customFieldsObj[fieldDef.key] = normalizedValue;
             }
           }
         });
@@ -148,14 +132,107 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
     }
   };
 
+  const convertCustomFieldsToArray = (customFieldsObj) => {
+    if (!customFieldsObj || typeof customFieldsObj !== 'object') {
+      return [];
+    }
+
+    const customFieldsArray = [];
+
+    // Проходим по каждому полю в объекте
+    Object.entries(customFieldsObj).forEach(([fieldKey, fieldValue]) => {
+      if (!fieldValue || !fieldValue.trim()) {
+        return; // Пропускаем пустые значения
+      }
+
+      // Находим определение поля
+      const fieldDef = customFields.find(f => f.key === fieldKey);
+      if (!fieldDef) {
+        return; // Пропускаем поля без определения
+      }
+
+      // Создаем базовую структуру поля
+      const customFieldItem = {
+        custom_field_id: fieldDef.id,
+        custom_field_key: fieldDef.key,
+        custom_field_label: fieldDef.label,
+        custom_field_value: fieldValue.trim()
+      };
+
+      // Ищем выбранное значение в allowed_values
+      let selectedValue = null;
+      if (fieldDef.allowed_values && Array.isArray(fieldDef.allowed_values)) {
+        selectedValue = fieldDef.allowed_values.find(av => {
+          const value = av.value ? String(av.value).trim() : '';
+          const valueId = av.value_id ? String(av.value_id).trim() : '';
+          const searchValue = String(fieldValue).trim();
+          
+          // Сравниваем по значению или по value_id
+          return value === searchValue || valueId === searchValue;
+        });
+      }
+
+      // Если найдено значение с linked_custom_fields, добавляем их
+      if (selectedValue && selectedValue.linked_custom_fields && Array.isArray(selectedValue.linked_custom_fields)) {
+        const linkedFields = selectedValue.linked_custom_fields.map(linkedField => {
+          // Собираем только те значения, которые установлены в позиции
+          const linkedFieldValues = [];
+          
+          if (linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
+            linkedField.linked_custom_field_values.forEach(linkedVal => {
+              // Проверяем, установлено ли это значение в позиции
+              const linkedFieldKey = linkedField.linked_custom_field_key;
+              const linkedValueInPosition = customFieldsObj[linkedFieldKey];
+              
+              if (linkedValueInPosition) {
+                const linkedValueText = linkedVal.linked_custom_field_value ? String(linkedVal.linked_custom_field_value).trim() : '';
+                const linkedValueId = linkedVal.linked_custom_field_value_id ? String(linkedVal.linked_custom_field_value_id).trim() : '';
+                const positionValue = String(linkedValueInPosition).trim();
+                
+                // Сравниваем по значению или по value_id
+                if (linkedValueText === positionValue || linkedValueId === positionValue) {
+                  linkedFieldValues.push({
+                    linked_custom_field_value_id: linkedVal.linked_custom_field_value_id,
+                    linked_custom_field_value: linkedVal.linked_custom_field_value
+                  });
+                }
+              }
+            });
+          }
+
+          return {
+            linked_custom_field_id: linkedField.linked_custom_field_id,
+            linked_custom_field_key: linkedField.linked_custom_field_key,
+            linked_custom_field_label: linkedField.linked_custom_field_label,
+            linked_custom_field_values: linkedFieldValues
+          };
+        }).filter(linkedField => linkedField.linked_custom_field_values.length > 0);
+
+        if (linkedFields.length > 0) {
+          customFieldItem.linked_custom_fields = linkedFields;
+        }
+      }
+
+      customFieldsArray.push(customFieldItem);
+    });
+
+    return customFieldsArray;
+  };
+
   const handleSave = async (positionData) => {
     try {
+      // Преобразуем custom_fields из объекта в массив с правильной структурой
+      const dataToSend = {
+        ...positionData,
+        custom_fields: convertCustomFieldsToArray(positionData.custom_fields)
+      };
+
       let savedPositionId = null;
       if (position && position.id) {
-        await axios.put(`${API_BASE}/positions/${position.id}`, positionData);
+        await axios.put(`${API_BASE}/positions/${position.id}`, dataToSend);
         savedPositionId = position.id;
       } else {
-        const response = await axios.post(`${API_BASE}/positions`, positionData);
+        const response = await axios.post(`${API_BASE}/positions`, dataToSend);
         savedPositionId = response.data.id;
       }
       setIsEditing(false);

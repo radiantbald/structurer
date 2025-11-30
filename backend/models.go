@@ -192,9 +192,10 @@ type TreeNode struct {
 
 // PositionCustomFieldValue represents a custom field value in position response
 type PositionCustomFieldValue struct {
-	CustomFieldKey    string                     `json:"custom_field_key,omitempty"`
-	ValueID           string                     `json:"value_id"`
-	Value             string                     `json:"value"`
+	CustomFieldID     string                     `json:"custom_field_id"`
+	CustomFieldKey    string                     `json:"custom_field_key"`
+	CustomFieldLabel  string                     `json:"custom_field_label"`
+	CustomFieldValue  string                     `json:"custom_field_value"`
 	LinkedCustomFields []LinkedCustomField       `json:"linked_custom_fields,omitempty"`
 }
 
