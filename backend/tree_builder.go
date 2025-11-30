@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+
+	"github.com/google/uuid"
 )
 
 func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
@@ -201,8 +203,8 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 func loadCustomFieldDefinitions(db *sql.DB) map[string]CustomFieldDefinition {
 	fieldDefsByKey := make(map[string]CustomFieldDefinition)
 	rows, err := db.Query(
-		`SELECT id, key, label, allowed_values, created_at, updated_at
-		FROM custom_field_definitions`,
+		`SELECT id, key, label, allowed_values_ids, created_at, updated_at
+		FROM custom_fields`,
 	)
 	if err != nil {
 		return fieldDefsByKey
@@ -211,13 +213,35 @@ func loadCustomFieldDefinitions(db *sql.DB) map[string]CustomFieldDefinition {
 
 	for rows.Next() {
 		var f CustomFieldDefinition
-		var allowedValuesJSON []byte
-		if err := rows.Scan(&f.ID, &f.Key, &f.Label, &allowedValuesJSON,
+		var allowedValueIDsJSON []byte
+		if err := rows.Scan(&f.ID, &f.Key, &f.Label, &allowedValueIDsJSON,
 			&f.CreatedAt, &f.UpdatedAt); err == nil {
-			if allowedValuesJSON != nil {
-				var arr AllowedValuesArray
-				if err := json.Unmarshal(allowedValuesJSON, &arr); err == nil {
-					f.AllowedValues = &arr
+			// Load custom_fields_values and build allowed_values
+			if allowedValueIDsJSON != nil {
+				var ids []string
+				if err := json.Unmarshal(allowedValueIDsJSON, &ids); err == nil {
+					var allowedValues AllowedValuesArray
+					for _, idStr := range ids {
+						if valueID, err := uuid.Parse(idStr); err == nil {
+							var cv CustomFieldValue
+							var linkedCustomFieldIDsJSON []byte
+							var linkedCustomFieldValueIDsJSON []byte
+							err := db.QueryRow(
+								`SELECT id, value, linked_custom_fields_ids, linked_custom_fields_values_ids, created_at, updated_at
+								FROM custom_fields_values WHERE id = $1`,
+								valueID,
+							).Scan(&cv.ID, &cv.Value, &linkedCustomFieldIDsJSON, &linkedCustomFieldValueIDsJSON, &cv.CreatedAt, &cv.UpdatedAt)
+							if err == nil {
+								// LinkedCustomFields is no longer stored in DB, set empty array
+								allowedValues = append(allowedValues, AllowedValue{
+									ValueID:            cv.ID,
+									Value:              cv.Value,
+									LinkedCustomFields: []LinkedCustomField{},
+								})
+							}
+						}
+					}
+					f.AllowedValues = &allowedValues
 				}
 			}
 			fieldDefsByKey[f.Key] = f

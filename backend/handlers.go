@@ -274,8 +274,8 @@ func (h *Handler) GetPosition(w http.ResponseWriter, r *http.Request) {
 
 	// Load all custom field definitions
 	rows, err := h.db.Query(
-		`SELECT id, key, label, allowed_values, created_at, updated_at
-		FROM custom_field_definitions`,
+		`SELECT id, key, label, allowed_values_ids, created_at, updated_at
+		FROM custom_fields`,
 	)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -287,17 +287,40 @@ func (h *Handler) GetPosition(w http.ResponseWriter, r *http.Request) {
 	fieldDefsByKey := make(map[string]CustomFieldDefinition)
 	for rows.Next() {
 		var f CustomFieldDefinition
-		var allowedValuesJSON []byte
-		err := rows.Scan(&f.ID, &f.Key, &f.Label, &allowedValuesJSON,
+		var allowedValueIDsJSON []byte
+		err := rows.Scan(&f.ID, &f.Key, &f.Label, &allowedValueIDsJSON,
 			&f.CreatedAt, &f.UpdatedAt)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if allowedValuesJSON != nil {
-			var arr AllowedValuesArray
-			json.Unmarshal(allowedValuesJSON, &arr)
-			f.AllowedValues = &arr
+		// Load custom_fields_values and build allowed_values
+		if allowedValueIDsJSON != nil {
+			var ids []string
+			if err := json.Unmarshal(allowedValueIDsJSON, &ids); err == nil {
+				var allowedValues AllowedValuesArray
+				for _, idStr := range ids {
+					if valueID, err := uuid.Parse(idStr); err == nil {
+						var cv CustomFieldValue
+						var linkedCustomFieldIDsJSON []byte
+						var linkedCustomFieldValueIDsJSON []byte
+						err := h.db.QueryRow(
+							`SELECT id, value, linked_custom_fields_ids, linked_custom_fields_values_ids, created_at, updated_at
+							FROM custom_fields_values WHERE id = $1`,
+							valueID,
+						).Scan(&cv.ID, &cv.Value, &linkedCustomFieldIDsJSON, &linkedCustomFieldValueIDsJSON, &cv.CreatedAt, &cv.UpdatedAt)
+						if err == nil {
+							// LinkedCustomFields is no longer stored in DB, set empty array
+							allowedValues = append(allowedValues, AllowedValue{
+								ValueID:            cv.ID,
+								Value:              cv.Value,
+								LinkedCustomFields: []LinkedCustomField{},
+							})
+						}
+					}
+				}
+				f.AllowedValues = &allowedValues
+			}
 		}
 		fieldDefsByKey[f.Key] = f
 	}
@@ -501,8 +524,8 @@ func (h *Handler) DeletePosition(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetCustomFields(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.Query(
-		`SELECT id, key, label, allowed_values, created_at, updated_at
-		FROM custom_field_definitions ORDER BY label`,
+		`SELECT id, key, label, allowed_values_ids, created_at, updated_at
+		FROM custom_fields ORDER BY label`,
 	)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -513,18 +536,52 @@ func (h *Handler) GetCustomFields(w http.ResponseWriter, r *http.Request) {
 	var fields []CustomFieldDefinition
 	for rows.Next() {
 		var f CustomFieldDefinition
-		var allowedValuesJSON []byte
-		err := rows.Scan(&f.ID, &f.Key, &f.Label, &allowedValuesJSON,
+		var allowedValueIDsJSON []byte
+		err := rows.Scan(&f.ID, &f.Key, &f.Label, &allowedValueIDsJSON,
 			&f.CreatedAt, &f.UpdatedAt)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if allowedValuesJSON != nil {
-			var arr AllowedValuesArray
-			json.Unmarshal(allowedValuesJSON, &arr)
-			f.AllowedValues = &arr
+
+		// Parse allowed_values_ids
+		if allowedValueIDsJSON != nil {
+			var ids []string
+			if err := json.Unmarshal(allowedValueIDsJSON, &ids); err == nil {
+				uuidArray := make(UUIDArray, len(ids))
+				for i, idStr := range ids {
+					if id, err := uuid.Parse(idStr); err == nil {
+						uuidArray[i] = id
+					}
+				}
+				f.AllowedValueIDs = &uuidArray
+			}
 		}
+
+		// Load custom_fields_values and build allowed_values
+		if f.AllowedValueIDs != nil && len(*f.AllowedValueIDs) > 0 {
+			var allowedValues AllowedValuesArray
+			for _, valueID := range *f.AllowedValueIDs {
+				var cv CustomFieldValue
+				var linkedCustomFieldIDsJSON []byte
+				var linkedCustomFieldValueIDsJSON []byte
+				err := h.db.QueryRow(
+					`SELECT id, value, linked_custom_fields_ids, linked_custom_fields_values_ids, created_at, updated_at
+					FROM custom_fields_values WHERE id = $1`,
+					valueID,
+				).Scan(&cv.ID, &cv.Value, &linkedCustomFieldIDsJSON, &linkedCustomFieldValueIDsJSON, &cv.CreatedAt, &cv.UpdatedAt)
+				if err == nil {
+					// LinkedCustomFields is no longer stored in DB, set empty array
+					allowedValues = append(allowedValues, AllowedValue{
+						ValueID:            cv.ID,
+						Value:              cv.Value,
+						LinkedCustomFields: []LinkedCustomField{},
+					})
+				}
+			}
+			f.AllowedValues = &allowedValues
+		}
+
 		fields = append(fields, f)
 	}
 
@@ -541,33 +598,71 @@ func (h *Handler) CreateCustomField(w http.ResponseWriter, r *http.Request) {
 
 	f.ID = uuid.New()
 
+	// Start transaction
+	tx, err := h.db.Begin()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
 	// Generate value_id for each allowed value if not present
+	var allowedValueIDs []uuid.UUID
+
 	if f.AllowedValues != nil {
 		for i := range *f.AllowedValues {
 			if (*f.AllowedValues)[i].ValueID == uuid.Nil {
 				(*f.AllowedValues)[i].ValueID = uuid.New()
 			}
+			allowedValueIDs = append(allowedValueIDs, (*f.AllowedValues)[i].ValueID)
+
 			// Generate value_id for linked custom field values if not present
+			var linkedCustomFieldIDs []uuid.UUID
+			var linkedCustomFieldValueIDs []uuid.UUID
 			for j := range (*f.AllowedValues)[i].LinkedCustomFields {
+				linkedCustomFieldIDs = append(linkedCustomFieldIDs, (*f.AllowedValues)[i].LinkedCustomFields[j].LinkedCustomFieldID)
 				for k := range (*f.AllowedValues)[i].LinkedCustomFields[j].LinkedCustomFieldValues {
 					if (*f.AllowedValues)[i].LinkedCustomFields[j].LinkedCustomFieldValues[k].LinkedCustomFieldValueID == uuid.Nil {
 						(*f.AllowedValues)[i].LinkedCustomFields[j].LinkedCustomFieldValues[k].LinkedCustomFieldValueID = uuid.New()
 					}
+					linkedCustomFieldValueIDs = append(linkedCustomFieldValueIDs, (*f.AllowedValues)[i].LinkedCustomFields[j].LinkedCustomFieldValues[k].LinkedCustomFieldValueID)
 				}
+			}
+
+			// Save custom_field_value with linked IDs
+			linkedCustomFieldIDsArray := UUIDArray(linkedCustomFieldIDs)
+			linkedCustomFieldValueIDsArray := UUIDArray(linkedCustomFieldValueIDs)
+			linkedCustomFieldIDsJSON, _ := linkedCustomFieldIDsArray.Value()
+			linkedCustomFieldValueIDsJSON, _ := linkedCustomFieldValueIDsArray.Value()
+
+			_, err = tx.Exec(
+				`INSERT INTO custom_fields_values (id, value, linked_custom_fields_ids, linked_custom_fields_values_ids, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, NOW(), NOW())
+				ON CONFLICT (id) DO UPDATE SET
+					value = EXCLUDED.value,
+					linked_custom_fields_ids = EXCLUDED.linked_custom_fields_ids,
+					linked_custom_fields_values_ids = EXCLUDED.linked_custom_fields_values_ids,
+					updated_at = NOW()`,
+				(*f.AllowedValues)[i].ValueID,
+				(*f.AllowedValues)[i].Value,
+				linkedCustomFieldIDsJSON,
+				linkedCustomFieldValueIDsJSON,
+			)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
 			}
 		}
 	}
 
-	var allowedValuesJSON []byte
-	if f.AllowedValues != nil {
-		allowedValuesJSON, _ = json.Marshal(*f.AllowedValues)
-	}
+	// Prepare JSONB array for allowed_values_ids
+	allowedValueIDsArray := UUIDArray(allowedValueIDs)
+	allowedValueIDsJSON, _ := allowedValueIDsArray.Value()
 
-	// Type is always 'enum' now, but we keep it for backward compatibility with DB
-	_, err := h.db.Exec(
-		`INSERT INTO custom_field_definitions (id, key, label, type, allowed_values, created_at, updated_at)
-		VALUES ($1, $2, $3, 'enum', $4, NOW(), NOW())`,
-		f.ID, f.Key, f.Label, allowedValuesJSON,
+	_, err = tx.Exec(
+		`INSERT INTO custom_fields (id, key, label, allowed_values_ids, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())`,
+		f.ID, f.Key, f.Label, allowedValueIDsJSON,
 	)
 
 	if err != nil {
@@ -575,6 +670,12 @@ func (h *Handler) CreateCustomField(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Field with this key already exists", http.StatusConflict)
 			return
 		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Commit transaction
+	if err = tx.Commit(); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -598,36 +699,120 @@ func (h *Handler) UpdateCustomField(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Start transaction
+	tx, err := h.db.Begin()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	// Get old allowed_values_ids to delete unused values
+	var oldAllowedValueIDsJSON []byte
+	err = tx.QueryRow(
+		`SELECT allowed_values_ids FROM custom_fields WHERE id = $1`,
+		id,
+	).Scan(&oldAllowedValueIDsJSON)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	// Generate value_id for each allowed value if not present
+	var allowedValueIDs []uuid.UUID
+
 	if f.AllowedValues != nil {
 		for i := range *f.AllowedValues {
 			if (*f.AllowedValues)[i].ValueID == uuid.Nil {
 				(*f.AllowedValues)[i].ValueID = uuid.New()
 			}
+			allowedValueIDs = append(allowedValueIDs, (*f.AllowedValues)[i].ValueID)
+
 			// Generate value_id for linked custom field values if not present
+			var linkedCustomFieldIDs []uuid.UUID
+			var linkedCustomFieldValueIDs []uuid.UUID
 			for j := range (*f.AllowedValues)[i].LinkedCustomFields {
+				linkedCustomFieldIDs = append(linkedCustomFieldIDs, (*f.AllowedValues)[i].LinkedCustomFields[j].LinkedCustomFieldID)
 				for k := range (*f.AllowedValues)[i].LinkedCustomFields[j].LinkedCustomFieldValues {
 					if (*f.AllowedValues)[i].LinkedCustomFields[j].LinkedCustomFieldValues[k].LinkedCustomFieldValueID == uuid.Nil {
 						(*f.AllowedValues)[i].LinkedCustomFields[j].LinkedCustomFieldValues[k].LinkedCustomFieldValueID = uuid.New()
+					}
+					linkedCustomFieldValueIDs = append(linkedCustomFieldValueIDs, (*f.AllowedValues)[i].LinkedCustomFields[j].LinkedCustomFieldValues[k].LinkedCustomFieldValueID)
+				}
+			}
+
+			// Save or update custom_field_value with linked IDs
+			linkedCustomFieldIDsArray := UUIDArray(linkedCustomFieldIDs)
+			linkedCustomFieldValueIDsArray := UUIDArray(linkedCustomFieldValueIDs)
+			linkedCustomFieldIDsJSON, _ := linkedCustomFieldIDsArray.Value()
+			linkedCustomFieldValueIDsJSON, _ := linkedCustomFieldValueIDsArray.Value()
+
+			_, err = tx.Exec(
+				`INSERT INTO custom_fields_values (id, value, linked_custom_fields_ids, linked_custom_fields_values_ids, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, NOW(), NOW())
+				ON CONFLICT (id) DO UPDATE SET
+					value = EXCLUDED.value,
+					linked_custom_fields_ids = EXCLUDED.linked_custom_fields_ids,
+					linked_custom_fields_values_ids = EXCLUDED.linked_custom_fields_values_ids,
+					updated_at = NOW()`,
+				(*f.AllowedValues)[i].ValueID,
+				(*f.AllowedValues)[i].Value,
+				linkedCustomFieldIDsJSON,
+				linkedCustomFieldValueIDsJSON,
+			)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+	}
+
+	// Delete unused custom_fields_values (values that are no longer in allowed_values_ids)
+	if oldAllowedValueIDsJSON != nil {
+		var oldIDs []string
+		if err := json.Unmarshal(oldAllowedValueIDsJSON, &oldIDs); err == nil {
+			oldIDsMap := make(map[string]bool)
+			for _, idStr := range oldIDs {
+				oldIDsMap[idStr] = true
+			}
+			for _, newID := range allowedValueIDs {
+				delete(oldIDsMap, newID.String())
+			}
+			// Delete values that are no longer used
+			for oldIDStr := range oldIDsMap {
+				if oldID, err := uuid.Parse(oldIDStr); err == nil {
+					// Check if this value is used by other custom_fields
+					var count int
+					err = tx.QueryRow(
+						`SELECT COUNT(*) FROM custom_fields 
+						WHERE id != $1 AND allowed_values_ids @> $2::text::jsonb`,
+						id, `["`+oldIDStr+`"]`,
+					).Scan(&count)
+					if err == nil && count == 0 {
+						// Not used by other definitions, safe to delete
+						tx.Exec(`DELETE FROM custom_fields_values WHERE id = $1`, oldID)
 					}
 				}
 			}
 		}
 	}
 
-	var allowedValuesJSON []byte
-	if f.AllowedValues != nil {
-		allowedValuesJSON, _ = json.Marshal(*f.AllowedValues)
-	}
+	// Prepare JSONB array for allowed_values_ids
+	allowedValueIDsArray := UUIDArray(allowedValueIDs)
+	allowedValueIDsJSON, _ := allowedValueIDsArray.Value()
 
-	// Type is always 'enum' now, but we keep it for backward compatibility with DB
-	_, err = h.db.Exec(
-		`UPDATE custom_field_definitions SET label = $1, type = 'enum', allowed_values = $2, 
-		updated_at = NOW() WHERE id = $3`,
-		f.Label, allowedValuesJSON, id,
+	_, err = tx.Exec(
+		`UPDATE custom_fields SET label = $1, allowed_values_ids = $2, updated_at = NOW() WHERE id = $3`,
+		f.Label, allowedValueIDsJSON, id,
 	)
 
 	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Commit transaction
+	if err = tx.Commit(); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -648,7 +833,7 @@ func (h *Handler) DeleteCustomField(w http.ResponseWriter, r *http.Request) {
 	// Get field key before deletion
 	var fieldKey string
 	err = h.db.QueryRow(
-		"SELECT key FROM custom_field_definitions WHERE id = $1",
+		"SELECT key FROM custom_fields WHERE id = $1",
 		id,
 	).Scan(&fieldKey)
 
@@ -736,7 +921,7 @@ func (h *Handler) DeleteCustomField(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Delete the custom field definition
-	_, err = tx.Exec("DELETE FROM custom_field_definitions WHERE id = $1", id)
+	_, err = tx.Exec("DELETE FROM custom_fields WHERE id = $1", id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

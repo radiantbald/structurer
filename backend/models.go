@@ -64,14 +64,89 @@ func (a *AllowedValuesArray) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, a)
 }
 
+// UUIDArray represents an array of UUIDs as JSONB
+type UUIDArray []uuid.UUID
+
+func (a UUIDArray) Value() (driver.Value, error) {
+	if a == nil {
+		return nil, nil
+	}
+	// Convert to array of strings
+	strs := make([]string, len(a))
+	for i, id := range a {
+		strs[i] = id.String()
+	}
+	return json.Marshal(strs)
+}
+
+func (a *UUIDArray) Scan(value interface{}) error {
+	if value == nil {
+		*a = nil
+		return nil
+	}
+	bytes, ok := value.([]byte)
+	if !ok {
+		return nil
+	}
+	// Parse as array of strings
+	var strs []string
+	if err := json.Unmarshal(bytes, &strs); err != nil {
+		return err
+	}
+	// Convert to UUIDs
+	*a = make([]uuid.UUID, len(strs))
+	for i, s := range strs {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			return err
+		}
+		(*a)[i] = id
+	}
+	return nil
+}
+
+// LinkedCustomFieldsArray represents an array of linked custom fields
+type LinkedCustomFieldsArray []LinkedCustomField
+
+func (a LinkedCustomFieldsArray) Value() (driver.Value, error) {
+	if a == nil {
+		return nil, nil
+	}
+	return json.Marshal(a)
+}
+
+func (a *LinkedCustomFieldsArray) Scan(value interface{}) error {
+	if value == nil {
+		*a = nil
+		return nil
+	}
+	bytes, ok := value.([]byte)
+	if !ok {
+		return nil
+	}
+	return json.Unmarshal(bytes, a)
+}
+
+// CustomFieldValue represents a custom field value in the database
+type CustomFieldValue struct {
+	ID                      uuid.UUID              `json:"id" db:"id"`
+	Value                   string                 `json:"value" db:"value"`
+	LinkedCustomFields      LinkedCustomFieldsArray `json:"linked_custom_fields" db:"linked_custom_fields"`
+	LinkedCustomFieldIDs    *UUIDArray              `json:"-" db:"linked_custom_fields_ids"` // Stored in DB
+	LinkedCustomFieldValueIDs *UUIDArray            `json:"-" db:"linked_custom_fields_values_ids"` // Stored in DB
+	CreatedAt               time.Time              `json:"created_at" db:"created_at"`
+	UpdatedAt               time.Time              `json:"updated_at" db:"updated_at"`
+}
+
 // CustomFieldDefinition represents a custom field definition
 type CustomFieldDefinition struct {
-	ID           uuid.UUID          `json:"id" db:"id"`
-	Key          string             `json:"key" db:"key"`
-	Label        string             `json:"label" db:"label"`
-	AllowedValues *AllowedValuesArray `json:"allowed_values" db:"allowed_values"`
-	CreatedAt    time.Time          `json:"created_at" db:"created_at"`
-	UpdatedAt    time.Time          `json:"updated_at" db:"updated_at"`
+	ID            uuid.UUID          `json:"id" db:"id"`
+	Key           string             `json:"key" db:"key"`
+	Label         string             `json:"label" db:"label"`
+	AllowedValues *AllowedValuesArray `json:"allowed_values" db:"-"` // Computed field, not stored in DB
+	AllowedValueIDs *UUIDArray        `json:"-" db:"allowed_values_ids"` // Stored in DB
+	CreatedAt     time.Time          `json:"created_at" db:"created_at"`
+	UpdatedAt     time.Time          `json:"updated_at" db:"updated_at"`
 }
 
 // TreeLevel represents a level in a tree definition
