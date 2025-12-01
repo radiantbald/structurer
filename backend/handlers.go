@@ -352,6 +352,7 @@ func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
 	//   }
 	// ]
 	// Note: custom_field_value_id is stored in custom_fields_ids
+	//       linked_custom_field_id is stored in custom_fields_ids
 	//       linked_custom_field_value_id is stored in custom_fields_values_ids
 	customFieldsIDs := make([]uuid.UUID, 0)
 	customFieldsValuesIDs := make([]uuid.UUID, 0)
@@ -379,8 +380,8 @@ func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
 								if linkedFieldIDRaw, ok := lfMap["linked_custom_field_id"]; ok {
 									if linkedFieldIDStr, ok := linkedFieldIDRaw.(string); ok && linkedFieldIDStr != "" {
 										if fieldID, err := uuid.Parse(linkedFieldIDStr); err == nil {
-											// ID привязанного кастомного поля также храним в custom_fields_values_ids
-											customFieldsValuesIDs = append(customFieldsValuesIDs, fieldID)
+											// ID привязанного кастомного поля храним в custom_fields_ids
+											customFieldsIDs = append(customFieldsIDs, fieldID)
 										}
 									}
 								}
@@ -1024,6 +1025,7 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 	//   }
 	// ]
 	// Note: custom_field_value_id is stored in custom_fields_ids
+	//       linked_custom_field_id is stored in custom_fields_ids
 	//       linked_custom_field_value_id is stored in custom_fields_values_ids
 	customFieldsIDs := make([]uuid.UUID, 0)
 	customFieldsValuesIDs := make([]uuid.UUID, 0)
@@ -1062,8 +1064,8 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 								if linkedFieldIDRaw, ok := lfMap["linked_custom_field_id"]; ok {
 									if linkedFieldIDStr, ok := linkedFieldIDRaw.(string); ok && linkedFieldIDStr != "" {
 										if fieldID, err := uuid.Parse(linkedFieldIDStr); err == nil {
-											// ID привязанного кастомного поля также храним в custom_fields_values_ids
-											customFieldsValuesIDs = append(customFieldsValuesIDs, fieldID)
+											// ID привязанного кастомного поля храним в custom_fields_ids
+											customFieldsIDs = append(customFieldsIDs, fieldID)
 										}
 									}
 								}
