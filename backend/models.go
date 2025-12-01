@@ -193,11 +193,12 @@ type TreeNode struct {
 
 // PositionCustomFieldValue represents a custom field value in position response
 type PositionCustomFieldValue struct {
-	CustomFieldID     string                     `json:"custom_field_id"`
-	CustomFieldKey    string                     `json:"custom_field_key"`
-	CustomFieldLabel  string                     `json:"custom_field_label"`
-	CustomFieldValue  string                     `json:"custom_field_value"`
-	LinkedCustomFields []LinkedCustomField       `json:"linked_custom_fields,omitempty"`
+	CustomFieldID      string              `json:"custom_field_id"`
+	CustomFieldKey     string              `json:"custom_field_key"`
+	CustomFieldLabel   string              `json:"custom_field_label"`
+	CustomFieldValue   string              `json:"custom_field_value"`
+	CustomFieldValueID uuid.UUID           `json:"custom_field_value_id"`
+	LinkedCustomFields []LinkedCustomField `json:"linked_custom_fields,omitempty"`
 }
 
 // JSONB is a helper type for JSONB columns

@@ -371,10 +371,21 @@ func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 
-					// Process linked custom fields and extract their value IDs
+					// Process linked custom fields and extract their field IDs и value IDs
 					if linkedFields, ok := cfMap["linked_custom_fields"].([]interface{}); ok {
 						for _, lfItem := range linkedFields {
 							if lfMap, ok := lfItem.(map[string]interface{}); ok {
+								// 1) Сохраняем ID самого привязанного кастомного поля
+								if linkedFieldIDRaw, ok := lfMap["linked_custom_field_id"]; ok {
+									if linkedFieldIDStr, ok := linkedFieldIDRaw.(string); ok && linkedFieldIDStr != "" {
+										if fieldID, err := uuid.Parse(linkedFieldIDStr); err == nil {
+											// ID привязанного кастомного поля также храним в custom_fields_values_ids
+											customFieldsValuesIDs = append(customFieldsValuesIDs, fieldID)
+										}
+									}
+								}
+
+								// 2) Сохраняем ID выбранных значений привязанных кастомных полей
 								if linkedValues, ok := lfMap["linked_custom_field_values"].([]interface{}); ok {
 									for _, lvItem := range linkedValues {
 										if lvMap, ok := lvItem.(map[string]interface{}); ok {
@@ -670,10 +681,11 @@ func (h *Handler) buildCustomFieldsArrayFromIDs(customFieldsIDs *UUIDArray, cust
 		}
 
 		valueItem := PositionCustomFieldValue{
-			CustomFieldID:    fieldDef.ID.String(),
-			CustomFieldKey:   fieldDef.Key,
-			CustomFieldLabel: fieldDef.Label,
-			CustomFieldValue: valueText,
+			CustomFieldID:      fieldDef.ID.String(),
+			CustomFieldKey:     fieldDef.Key,
+			CustomFieldLabel:   fieldDef.Label,
+			CustomFieldValue:   valueText,
+			CustomFieldValueID: valueID,
 		}
 		if len(linkedFields) > 0 {
 			valueItem.LinkedCustomFields = linkedFields
@@ -816,26 +828,37 @@ func (h *Handler) buildCustomFieldsArray(customFieldsJSON JSONB) ([]PositionCust
 				matchedValueID = &valueID
 				matchedValueText = storedValueStr
 			} else {
-				// Value not found, check if it's a combined value (with " - ")
-				// If it contains " - ", try to extract the main value (before first " - ")
-				if strings.Contains(storedValueStr, " - ") {
+				// Value not found, check if it's a combined value.
+				// Новый формат: "Main (Linked1, Linked2)".
+				// Старый формат: "Main - Linked1 - Linked2".
+				mainValue := ""
+
+				// Попробуем сначала скобочный формат
+				if idx := strings.Index(storedValueStr, "("); idx > 0 {
+					endIdx := strings.LastIndex(storedValueStr, ")")
+					if endIdx > idx {
+						mainValue = strings.TrimSpace(storedValueStr[:idx])
+					}
+				}
+
+				// Если скобочный формат не сработал, пробуем старый через " - "
+				if mainValue == "" && strings.Contains(storedValueStr, " - ") {
 					parts := strings.SplitN(storedValueStr, " - ", 2)
-					mainValue := strings.TrimSpace(parts[0])
-					if mainValue != "" {
-						// Try to find the main value in custom_fields_values
-						err := h.db.QueryRow(
-							`SELECT id FROM custom_fields_values WHERE value = $1 LIMIT 1`,
-							mainValue,
-						).Scan(&valueID)
-						if err == nil {
-							matchedValueID = &valueID
-							matchedValueText = mainValue
-						} else {
-							// Main value not found, use the extracted main value
-							matchedValueText = mainValue
-						}
+					mainValue = strings.TrimSpace(parts[0])
+				}
+
+				if mainValue != "" {
+					// Try to find the main value in custom_fields_values
+					err := h.db.QueryRow(
+						`SELECT id FROM custom_fields_values WHERE value = $1 LIMIT 1`,
+						mainValue,
+					).Scan(&valueID)
+					if err == nil {
+						matchedValueID = &valueID
+						matchedValueText = mainValue
 					} else {
-						matchedValueText = storedValueStr
+						// Main value not found, use the extracted main value
+						matchedValueText = mainValue
 					}
 				} else {
 					// Value not found and not combined, use as-is
@@ -1031,10 +1054,21 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[UpdatePosition] custom_field_value_id not found in custom field item %d", i)
 					}
 
-					// Process linked custom fields and extract their value IDs
+					// Process linked custom fields and extract their field IDs и value IDs
 					if linkedFields, ok := cfMap["linked_custom_fields"].([]interface{}); ok {
 						for _, lfItem := range linkedFields {
 							if lfMap, ok := lfItem.(map[string]interface{}); ok {
+								// 1) Сохраняем ID самого привязанного кастомного поля
+								if linkedFieldIDRaw, ok := lfMap["linked_custom_field_id"]; ok {
+									if linkedFieldIDStr, ok := linkedFieldIDRaw.(string); ok && linkedFieldIDStr != "" {
+										if fieldID, err := uuid.Parse(linkedFieldIDStr); err == nil {
+											// ID привязанного кастомного поля также храним в custom_fields_values_ids
+											customFieldsValuesIDs = append(customFieldsValuesIDs, fieldID)
+										}
+									}
+								}
+
+								// 2) Сохраняем ID выбранных значений привязанных кастомных полей
 								if linkedValues, ok := lfMap["linked_custom_field_values"].([]interface{}); ok {
 									for _, lvItem := range linkedValues {
 										if lvMap, ok := lvItem.(map[string]interface{}); ok {
@@ -1623,23 +1657,75 @@ func (h *Handler) DeleteCustomField(w http.ResponseWriter, r *http.Request) {
 	if err == nil && allowedValueIDsJSON != nil {
 		var valueIDs []string
 		if err := json.Unmarshal(allowedValueIDsJSON, &valueIDs); err == nil && len(valueIDs) > 0 {
-			// Build JSONB array of value IDs to remove
-			valueIDsJSON, _ := json.Marshal(valueIDs)
+			// Remove all value IDs that belong to this field from all positions.
+			// Реализуем это в Go, чтобы избежать сложных SQL-конструкций,
+			// которые приводили к ошибкам парсинга в pq.
 
-			// Remove all value IDs that belong to this field from all positions
-			// Remove each value ID from the custom_fields_ids array
-			_, err = tx.Exec(
-				`UPDATE positions 
-				SET custom_fields_ids = (
-					SELECT COALESCE(jsonb_agg(elem), '[]'::jsonb)
-					FROM jsonb_array_elements_text(custom_fields_ids) AS elem
-					WHERE elem NOT IN (SELECT jsonb_array_elements_text($1::jsonb))
-				), updated_at = NOW()
-				WHERE custom_fields_ids ?| $2`,
-				valueIDsJSON,
-				valueIDs,
-			)
+			// Подготовим set для быстрого поиска ID
+			valueSet := make(map[string]struct{}, len(valueIDs))
+			for _, v := range valueIDs {
+				valueSet[v] = struct{}{}
+			}
+
+			// Пройдем по всем позициям с непустыми custom_fields_ids
+			rows, err := tx.Query(`SELECT id, custom_fields_ids FROM positions WHERE custom_fields_ids IS NOT NULL`)
 			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				var positionID int64
+				var cfJSON []byte
+				if err := rows.Scan(&positionID, &cfJSON); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+
+				// custom_fields_ids хранится как JSON-массив строк UUID
+				var cfIDs []string
+				if err := json.Unmarshal(cfJSON, &cfIDs); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+
+				// Отфильтруем значения, которые относятся к удаляемому полю
+				changed := false
+				var filtered []string
+				for _, idStr := range cfIDs {
+					if _, toRemove := valueSet[idStr]; toRemove {
+						changed = true
+						continue
+					}
+					filtered = append(filtered, idStr)
+				}
+
+				if !changed {
+					continue
+				}
+
+				// Сериализуем обратно в JSONB
+				newJSON, err := json.Marshal(filtered)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+
+				// Обновим позицию
+				_, err = tx.Exec(
+					`UPDATE positions 
+					SET custom_fields_ids = $1, updated_at = NOW()
+					WHERE id = $2`,
+					newJSON,
+					positionID,
+				)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
+			if err := rows.Err(); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}

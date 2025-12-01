@@ -36,83 +36,76 @@ function PositionCustomFieldsModal({
               {Object.entries(customFieldsValues).map(([key, value]) => {
                 const fieldDef = availableCustomFields.find(f => f.key === key);
                 const isEnum = fieldDef?.allowed_values && fieldDef.allowed_values.length > 0;
-                
+
                 // Нормализуем текущее значение для поиска совпадения
                 const normalizedCurrentValue = value ? String(value).trim() : '';
-                
-                // Извлекаем основную часть значения (до первого тире, если есть)
-                // Это нужно для случаев, когда значение было сохранено как "Value1 - LinkedValue1"
+
+                // Извлекаем основную часть значения (без прилинкованных, если они записаны в скобках или через тире)
+                // Это нужно для случаев, когда значение было сохранено как "Value1 (Linked1, Linked2)"
+                // или в старом формате "Value1 - Linked1 - Linked2"
                 const extractMainValue = (val) => {
                   if (!val) return '';
                   const trimmed = val.trim();
-                  // Если есть тире, берем часть до первого тире
+                  // Новый формат: "Main (Linked1, Linked2)"
+                  const parenStart = trimmed.indexOf('(');
+                  const parenEnd = trimmed.lastIndexOf(')');
+                  if (parenStart > 0 && parenEnd > parenStart) {
+                    return trimmed.substring(0, parenStart).trim();
+                  }
+                  // Старый формат: "Main - Linked1 - Linked2"
                   const dashIndex = trimmed.indexOf(' - ');
                   return dashIndex >= 0 ? trimmed.substring(0, dashIndex).trim() : trimmed;
                 };
-                
+
                 const mainValue = extractMainValue(normalizedCurrentValue);
-                
-                // Находим текущее выбранное значение среди опций селектора
-                // Опции теперь содержат полное значение с тире (если есть привязанные поля)
+
+                // Для enum‑полей селект должен опираться на value_id (уникальный ID значения),
+                // а не только на текст. Иначе при повторяющихся текстах браузер будет выбирать
+                // первое совпадение и визуально «выбираться» будет другой элемент.
                 let currentValueForSelect = '';
-                
                 if (isEnum) {
-                  if (normalizedCurrentValue) {
-                    // Создаем карту полных значений (с тире) для поиска
-                    const fullValueMap = new Map();
-                    
-                    // Строим полные значения для каждой опции
-                    fieldDef.allowed_values.forEach((val) => {
-                      const valueStr = typeof val === 'string' ? val.trim() : String(val.value || '').trim();
-                      const hasLinked = typeof val === 'object' && val.linked_custom_fields && val.linked_custom_fields.length > 0;
-                      const linkedValues = hasLinked 
-                        ? val.linked_custom_fields.flatMap(lf => 
-                            lf.linked_custom_field_values.map(lv => String(lv.linked_custom_field_value || '').trim())
-                          )
-                        : [];
-                      
-                      // Формируем полное значение с тире (как в опциях)
-                      const fullValue = linkedValues.length > 0
-                        ? `${valueStr} - ${linkedValues.join(' - ')}`
-                        : valueStr;
-                      
-                      fullValueMap.set(fullValue, fullValue);
-                      // Также добавляем основное значение для обратной совместимости
-                      fullValueMap.set(valueStr, fullValue);
-                      
-                      // Также добавляем value_id как ключ, если есть
-                      if (typeof val === 'object' && val.value_id) {
-                        const valueIdStr = String(val.value_id).trim();
-                        fullValueMap.set(valueIdStr, fullValue);
-                      }
-                    });
-                    
-                    // Пытаемся найти полное значение в карте
-                    if (fullValueMap.has(normalizedCurrentValue)) {
-                      currentValueForSelect = fullValueMap.get(normalizedCurrentValue);
-                    } else {
-                      // Если не нашли точное совпадение, пробуем найти без учета регистра
-                      let found = false;
-                      for (const [mapKey, mapVal] of fullValueMap.entries()) {
-                        if (mapKey.toLowerCase() === normalizedCurrentValue.toLowerCase()) {
-                          currentValueForSelect = mapVal;
-                          found = true;
-                          break;
-                        }
-                      }
-                      
-                      // Если не нашли, используем сохраненное значение как есть
-                      // Оно будет добавлено как опция ниже (для обратной совместимости)
-                      if (!found) {
-                        currentValueForSelect = normalizedCurrentValue;
-                      }
+                  const allowed = fieldDef?.allowed_values || [];
+
+                  // Ищем элемент, который соответствует либо сохранённому ID, либо тексту
+                  const matched = allowed.find(av => {
+                    if (!av) return false;
+                    if (typeof av === 'string') {
+                      // Старый формат: строковые значения
+                      const valStr = av.trim();
+                      return (
+                        normalizedCurrentValue === valStr ||
+                        mainValue === valStr
+                      );
                     }
+
+                    const valStr = av.value ? String(av.value).trim() : '';
+                    const idStr = av.value_id ? String(av.value_id).trim() : '';
+
+                    return (
+                      normalizedCurrentValue === idStr ||
+                      normalizedCurrentValue === valStr ||
+                      mainValue === valStr
+                    );
+                  });
+
+                  if (matched) {
+                    if (typeof matched === 'string') {
+                      // Старый формат: в value селекта используем сам текст
+                      currentValueForSelect = matched.trim();
+                    } else if (matched.value_id) {
+                      // Новый формат: используем value_id как значение селекта
+                      currentValueForSelect = String(matched.value_id).trim();
+                    } else if (matched.value) {
+                      currentValueForSelect = String(matched.value).trim();
+                    }
+                  } else {
+                    currentValueForSelect = '';
                   }
                 } else if (normalizedCurrentValue && !isEnum) {
                   // Для не-enum полей просто используем сохраненное значение
                   currentValueForSelect = normalizedCurrentValue;
                 }
-                
+
                 return (
                   <div key={key} className="custom-field-item">
                     <label>{fieldDef ? fieldDef.label : key}</label>
@@ -121,102 +114,79 @@ function PositionCustomFieldsModal({
                         <select
                           value={currentValueForSelect}
                           onChange={(e) => {
-                            const selectedValue = e.target.value;
-                            // Нормализуем выбранное значение
-                            // Значение уже содержит тире, если есть привязанные поля (из value атрибута опции)
-                            const normalizedValue = selectedValue.trim();
-                            
-                            // Извлекаем основное значение (до первого тире, если есть)
-                            const mainValue = normalizedValue.includes(' - ') 
-                              ? normalizedValue.substring(0, normalizedValue.indexOf(' - ')).trim()
-                              : normalizedValue;
-                            
-                            // Сохраняем основное значение поля
-                            onChangeValue(key, mainValue);
-                            
-                            // Если выбрано значение с прилинкованными полями, извлекаем и сохраняем их значения отдельно
-                            if (normalizedValue && normalizedValue.includes(' - ') && fieldDef.allowed_values) {
-                              // Извлекаем прилинкованные значения из выбранной строки (части после первого тире)
-                              const linkedParts = normalizedValue.substring(normalizedValue.indexOf(' - ') + 3).split(' - ');
-                              
-                              // Находим выбранное значение в allowed_values
-                              const selectedValueObj = fieldDef.allowed_values.find(v => {
-                                const valStr = typeof v === 'string' ? v.trim() : String(v.value || '').trim();
-                                return valStr === mainValue;
-                              });
-                              
-                              // Если найдено значение с прилинкованными полями, сохраняем только выбранные значения
-                              if (selectedValueObj && typeof selectedValueObj === 'object' && selectedValueObj.linked_custom_fields) {
-                                selectedValueObj.linked_custom_fields.forEach(linkedField => {
-                                  if (linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
-                                    const linkedFieldKey = linkedField.linked_custom_field_key;
-                                    if (linkedFieldKey) {
-                                      // Ищем значение прилинкованного поля, которое присутствует в выбранной строке
-                                      for (const linkedVal of linkedField.linked_custom_field_values) {
-                                        const linkedValueText = linkedVal.linked_custom_field_value 
-                                          ? String(linkedVal.linked_custom_field_value).trim() 
-                                          : '';
-                                        
-                                        // Проверяем, присутствует ли это значение в выбранной строке
-                                        if (linkedValueText && linkedParts.includes(linkedValueText)) {
-                                          // Сохраняем значение прилинкованного поля
-                                          onChangeValue(linkedFieldKey, linkedValueText);
-                                          break; // Берем первое совпадающее значение
-                                        }
-                                      }
-                                    }
-                                  }
-                                });
+                            const selectedOptionValue = e.target.value;
+
+                            if (!fieldDef || !fieldDef.allowed_values) {
+                              onChangeValue(key, selectedOptionValue);
+                              return;
+                            }
+
+                            // Находим выбранный объект в allowed_values.
+                            // Значение селекта — это либо value_id (новый формат), либо текст (старый формат).
+                            const selectedValueObj = fieldDef.allowed_values.find(v => {
+                              if (!v) return false;
+                              if (typeof v === 'string') {
+                                return selectedOptionValue === v.trim();
                               }
+                              const valStr = v.value ? String(v.value).trim() : '';
+                              const idStr = v.value_id ? String(v.value_id).trim() : '';
+                              return (
+                                selectedOptionValue === idStr ||
+                                selectedOptionValue === valStr
+                              );
+                            });
+
+                            // Что сохраняем в custom_fields:
+                            // - если есть value_id, сохраняем именно его (ID), чтобы однозначно
+                            //   восстанавливать выбор;
+                            // - иначе сохраняем текстовое значение.
+                            if (selectedValueObj) {
+                              let valueToStore = selectedOptionValue;
+                              if (typeof selectedValueObj === 'object') {
+                                if (selectedValueObj.value_id) {
+                                  valueToStore = String(selectedValueObj.value_id).trim();
+                                } else if (selectedValueObj.value) {
+                                  valueToStore = String(selectedValueObj.value).trim();
+                                }
+                              }
+
+                              onChangeValue(key, valueToStore);
+                            } else {
+                              // На всякий случай сохраняем то, что пришло из селекта
+                              onChangeValue(key, selectedOptionValue);
                             }
                           }}
                         >
                           <option value="">Выберите значение...</option>
                           {fieldDef.allowed_values.map((val, idx) => {
                             // Поддержка нового формата (объект с value) и старого (строка)
-                            // Нормализуем точно так же, как при поиске значения
                             const valueStr = typeof val === 'string' ? val.trim() : String(val.value || '').trim();
+                            const valueId = typeof val === 'object' && val.value_id
+                              ? String(val.value_id).trim()
+                              : null;
+                            // Уникальное значение option: в приоритете используем value_id,
+                            // иначе — текстовое значение.
+                            const optionValue = valueId || valueStr;
+
                             const hasLinked = typeof val === 'object' && val.linked_custom_fields && val.linked_custom_fields.length > 0;
-                            // Собираем все привязанные значения в один массив
+                            // Собираем все привязанные значения в один массив для отображения
                             const linkedValues = hasLinked 
                               ? val.linked_custom_fields.flatMap(lf => 
                                   lf.linked_custom_field_values.map(lv => String(lv.linked_custom_field_value || '').trim())
                                 )
                               : [];
                             
-                            // Формируем полное значение с тире для сохранения
-                            const fullValue = linkedValues.length > 0
-                              ? `${valueStr} - ${linkedValues.join(' - ')}`
+                            // Текст опции: "Main (Linked1, Linked2)", но value — только основное значение
+                            const fullLabel = linkedValues.length > 0
+                              ? `${valueStr} (${linkedValues.join(', ')})`
                               : valueStr;
                             
-                            // Используем полное значение с тире в value атрибуте опции
                             return (
-                              <option key={`${key}-${valueStr}-${idx}`} value={fullValue}>
-                                {fullValue}
+                              <option key={`${key}-${optionValue}-${idx}`} value={optionValue}>
+                                {fullLabel}
                               </option>
                             );
                           })}
-                          {/* Добавляем опцию для текущего значения, если оно не найдено в allowed_values 
-                              (например, установлено через прилинкованное поле, но не совпадает точно с опциями) */}
-                          {normalizedCurrentValue && 
-                           !fieldDef.allowed_values.some(v => {
-                             const valStr = typeof v === 'string' ? v.trim() : String(v.value || '').trim();
-                             const valId = typeof v === 'object' && v.value_id ? String(v.value_id).trim() : '';
-                             const hasLinked = typeof v === 'object' && v.linked_custom_fields && v.linked_custom_fields.length > 0;
-                             const linkedValues = hasLinked 
-                               ? v.linked_custom_fields.flatMap(lf => 
-                                   lf.linked_custom_field_values.map(lv => String(lv.linked_custom_field_value || '').trim())
-                                 )
-                               : [];
-                             const fullValue = linkedValues.length > 0
-                               ? `${valStr} - ${linkedValues.join(' - ')}`
-                               : valStr;
-                             return valStr === mainValue || valId === mainValue || fullValue === normalizedCurrentValue;
-                           }) && (
-                            <option key={`${key}-linked-${normalizedCurrentValue}`} value={normalizedCurrentValue}>
-                              {normalizedCurrentValue}
-                            </option>
-                          )}
                         </select>
                       ) : (
                         <input

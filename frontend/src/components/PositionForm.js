@@ -78,6 +78,43 @@ function PositionForm({
     setAvailableCustomFields(Array.isArray(customFields) ? customFields : []);
   }, [customFields]);
 
+  // Преобразует сохранённое значение кастомного поля (которое теперь может быть value_id)
+  // в человекочитаемое название на основе allowed_values из определения поля.
+  const getDisplayValueForCustomField = (fieldKey, storedValue) => {
+    if (storedValue === undefined || storedValue === null) return '';
+
+    const raw = String(storedValue).trim();
+    if (!raw) return '';
+
+    const fieldDef = Array.isArray(availableCustomFields)
+      ? availableCustomFields.find(f => f.key === fieldKey)
+      : null;
+
+    if (!fieldDef || !Array.isArray(fieldDef.allowed_values)) {
+      return raw;
+    }
+
+    const matched = fieldDef.allowed_values.find(av => {
+      if (!av) return false;
+      if (typeof av === 'string') {
+        return raw === av.trim();
+      }
+      const valueStr = av.value ? String(av.value).trim() : '';
+      const idStr = av.value_id ? String(av.value_id).trim() : '';
+      return raw === idStr || raw === valueStr;
+    });
+
+    if (!matched) {
+      return raw;
+    }
+
+    if (typeof matched === 'string') {
+      return matched.trim();
+    }
+
+    return matched.value ? String(matched.value).trim() : raw;
+  };
+
   const adjustTextareaHeight = (textarea) => {
     if (!textarea) return;
     
@@ -284,16 +321,15 @@ function PositionForm({
                 const fieldDef = Array.isArray(availableCustomFields)
                   ? availableCustomFields.find(f => f.key === key)
                   : null;
-                
-                // Build display value with linked values separated by dashes
-                let displayValue = String(value);
+                // Базовое отображаемое значение (с учётом того, что в состоянии может храниться value_id)
+                let displayValue = getDisplayValueForCustomField(key, value);
                 
                 // If we have the array format, find linked values for this field
                 if (Array.isArray(customFieldsArray)) {
                   const fieldItem = customFieldsArray.find(item => item.custom_field_key === key);
                   if (fieldItem) {
                     // Use the value from array format
-                    displayValue = fieldItem.value || String(value);
+                    displayValue = fieldItem.value || displayValue;
                     
                     // Add linked values if they exist
                     if (fieldItem.linked_custom_fields && Array.isArray(fieldItem.linked_custom_fields)) {
@@ -426,34 +462,49 @@ function PositionForm({
               const fieldDef = Array.isArray(availableCustomFields)
                 ? availableCustomFields.find(f => f.key === key)
                 : null;
-              
-              // Build display value with linked values separated by dashes
-              let displayValue = String(value);
-              
-              // If we have the array format, find linked values for this field
-              if (Array.isArray(customFieldsArray)) {
-                const fieldItem = customFieldsArray.find(item => item.custom_field_key === key);
-                if (fieldItem) {
-                  // Use the value from array format
-                  displayValue = fieldItem.value || String(value);
-                  
-                  // Add linked values if they exist
-                  if (fieldItem.linked_custom_fields && Array.isArray(fieldItem.linked_custom_fields)) {
-                    const linkedValues = [];
-                    fieldItem.linked_custom_fields.forEach(linkedField => {
-                      if (linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
-                        linkedField.linked_custom_field_values.forEach(linkedVal => {
-                          linkedValues.push(linkedVal.linked_custom_field_value);
-                        });
+              // Базовое отображаемое значение (с учётом того, что в состоянии может храниться value_id)
+              let displayValue = getDisplayValueForCustomField(key, value);
+              // Добавляем к основному значению привязанные значения (если они заданы в определении),
+              // не создавая отдельные кастомные поля. Формат: "Основное - Привязанное 1 - Привязанное 2".
+              if (fieldDef && Array.isArray(fieldDef.allowed_values)) {
+                const raw = value !== undefined && value !== null ? String(value).trim() : '';
+
+                if (raw) {
+                  // Находим выбранное значение в allowed_values по ID или тексту
+                  const matchedMain = fieldDef.allowed_values.find(av => {
+                    if (!av) return false;
+                    if (typeof av === 'string') {
+                      return raw === av.trim();
+                    }
+                    const valueStr = av.value ? String(av.value).trim() : '';
+                    const idStr = av.value_id ? String(av.value_id).trim() : '';
+                    return raw === idStr || raw === valueStr;
+                  });
+
+                  if (matchedMain && typeof matchedMain === 'object' && Array.isArray(matchedMain.linked_custom_fields)) {
+                    const linkedDisplayValues = [];
+
+                    matchedMain.linked_custom_fields.forEach(linkedField => {
+                      if (!Array.isArray(linkedField.linked_custom_field_values)) {
+                        return;
                       }
+                      linkedField.linked_custom_field_values.forEach(linkedVal => {
+                        const txt = linkedVal && linkedVal.linked_custom_field_value
+                          ? String(linkedVal.linked_custom_field_value).trim()
+                          : '';
+                        if (txt) {
+                          linkedDisplayValues.push(txt);
+                        }
+                      });
                     });
-                    if (linkedValues.length > 0) {
-                      displayValue = `${displayValue} - ${linkedValues.join(' - ')}`;
+
+                    if (linkedDisplayValues.length > 0) {
+                      displayValue = `${displayValue} - ${linkedDisplayValues.join(' - ')}`;
                     }
                   }
                 }
               }
-              
+
               return (
                 <span key={key} className="custom-field-chip">
                   <span className="custom-field-chip-label">{fieldDef ? fieldDef.label : key}:</span>

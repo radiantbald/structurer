@@ -531,10 +531,17 @@ func buildTreeLevel(positions []struct {
 						return linkedValues[i].order < linkedValues[j].order
 					})
 
-					// Build folder name: "main value - linked value 1 - linked value 2 - ..."
+					// Build folder name: "main value (linked value 1, linked value 2, ...)"
 					folderName := mainValueName
-					for _, lv := range linkedValues {
-						folderName += " - " + lv.valueName
+					if len(linkedValues) > 0 {
+						folderName += " ("
+						for i, lv := range linkedValues {
+							if i > 0 {
+								folderName += ", "
+							}
+							folderName += lv.valueName
+						}
+						folderName += ")"
 					}
 					
 					linkedValueGroups[folderName] = append(linkedValueGroups[folderName], pos)
