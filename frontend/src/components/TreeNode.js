@@ -244,17 +244,36 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
                       selectedKV.key === nodeKV.key && 
                       selectedKV.value === nodeKV.value;
     
-    // Получаем базовое значение (оригинальное значение поля)
-    let displayValue = nodeKV ? nodeKV.value : (node.custom_field_value || node.field_value || '');
-    // Если бэкенд передал отдельное display‑значение в deprecated‑поле field_value
-    // (например, "Основное - Прилинкованное"), используем его только для отображения.
-    if (
-      node.field_value &&
-      typeof node.field_value === 'string' &&
-      node.field_value.trim() &&
-      node.field_value !== displayValue
-    ) {
-      displayValue = node.field_value;
+    // Формируем комбинированное название из custom_field_value и linked_custom_fields
+    let displayValue = node.custom_field_value || nodeKV?.value || '';
+    
+    // Добавляем прилинкованные значения из linked_custom_fields
+    if (node.linked_custom_fields && Array.isArray(node.linked_custom_fields)) {
+      const linkedValues = [];
+      
+      // Сортируем linked_custom_fields по порядку (если есть level_order) или по ключу
+      const sortedLinkedFields = [...node.linked_custom_fields].sort((a, b) => {
+        // Можно добавить сортировку по порядку, если он будет передан
+        return (a.linked_custom_field_key || '').localeCompare(b.linked_custom_field_key || '');
+      });
+      
+      for (const linkedField of sortedLinkedFields) {
+        if (linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
+          for (const linkedValue of linkedField.linked_custom_field_values) {
+            if (linkedValue.linked_custom_field_value && typeof linkedValue.linked_custom_field_value === 'string') {
+              const trimmedValue = linkedValue.linked_custom_field_value.trim();
+              if (trimmedValue && !linkedValues.includes(trimmedValue)) {
+                linkedValues.push(trimmedValue);
+              }
+            }
+          }
+        }
+      }
+      
+      // Объединяем основное значение с прилинкованными через " - "
+      if (linkedValues.length > 0) {
+        displayValue = displayValue + ' - ' + linkedValues.join(' - ');
+      }
     }
 
     return (

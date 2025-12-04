@@ -180,7 +180,6 @@ type TreeNode struct {
 	Type            string     `json:"type"` // "root", "custom_field_value", "position"
 	LevelOrder      *int       `json:"level_order,omitempty"`
 	FieldKey        *string    `json:"field_key,omitempty"` // Deprecated: use CustomFieldKey
-	FieldValue      *string    `json:"field_value,omitempty"` // Deprecated: use CustomFieldValue
 	CustomFieldID   *string    `json:"custom_field_id,omitempty"`
 	CustomFieldKey  *string    `json:"custom_field_key,omitempty"`
 	CustomFieldValue *string   `json:"custom_field_value,omitempty"`

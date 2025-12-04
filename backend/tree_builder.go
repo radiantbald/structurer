@@ -685,7 +685,7 @@ func buildTreeLevel(positions []struct {
 			}
 
 			// Create nodes for each linked value group
-			for folderName, groupPositions := range linkedValueGroups {
+			for _, groupPositions := range linkedValueGroups {
 				// Build new path (still using original value for path matching)
 				newPath := make(map[string]string)
 				for k, v := range path {
@@ -744,11 +744,7 @@ func buildTreeLevel(positions []struct {
 
 				customFieldID := fieldDef.ID.String()
 				customFieldKey := fieldKey
-				// В custom_field_value храним оригинальное значение поля (без " - "),
-				// а комбинированную строку кладём в устаревшее поле field_value
-				// только для отображения на фронтенде.
 				originalValue := mainValueName
-				displayValue := folderName
 
 				nodes = append(nodes, TreeNode{
 					Type:               "custom_field_value",
@@ -756,7 +752,6 @@ func buildTreeLevel(positions []struct {
 					CustomFieldID:      &customFieldID,
 					CustomFieldKey:     &customFieldKey,
 					CustomFieldValue:   &originalValue,
-					FieldValue:         &displayValue,
 					LinkedCustomFields: linkedFields,
 					Children:           children,
 				})
@@ -879,14 +874,10 @@ func buildTreeLevel(positions []struct {
 		vi := ""
 		if fieldNodes[i].CustomFieldValue != nil {
 			vi = *fieldNodes[i].CustomFieldValue
-		} else if fieldNodes[i].FieldValue != nil {
-			vi = *fieldNodes[i].FieldValue
 		}
 		vj := ""
 		if fieldNodes[j].CustomFieldValue != nil {
 			vj = *fieldNodes[j].CustomFieldValue
-		} else if fieldNodes[j].FieldValue != nil {
-			vj = *fieldNodes[j].FieldValue
 		}
 		return vi < vj
 	})
