@@ -328,16 +328,24 @@ function PositionForm({
                 if (Array.isArray(customFieldsArray)) {
                   const fieldItem = customFieldsArray.find(item => item.custom_field_key === key);
                   if (fieldItem) {
-                    // Use the value from array format
-                    displayValue = fieldItem.value || displayValue;
+                    // Используем значение из массива позиции (custom_field_value),
+                    // чтобы гарантировать соответствие тому, что вернул бэкенд.
+                    const mainFromArray = fieldItem.custom_field_value
+                      ? String(fieldItem.custom_field_value).trim()
+                      : '';
+                    if (mainFromArray) {
+                      displayValue = mainFromArray;
+                    }
                     
-                    // Add linked values if they exist
+                    // Добавляем привязанные значения, если они есть
                     if (fieldItem.linked_custom_fields && Array.isArray(fieldItem.linked_custom_fields)) {
                       const linkedValues = [];
                       fieldItem.linked_custom_fields.forEach(linkedField => {
                         if (linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
                           linkedField.linked_custom_field_values.forEach(linkedVal => {
-                            linkedValues.push(linkedVal.linked_custom_field_value);
+                            if (linkedVal && linkedVal.linked_custom_field_value) {
+                              linkedValues.push(String(linkedVal.linked_custom_field_value).trim());
+                            }
                           });
                         }
                       });

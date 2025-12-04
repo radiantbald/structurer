@@ -140,20 +140,65 @@ function PositionCustomFieldsModal({
                             // - если есть value_id, сохраняем именно его (ID), чтобы однозначно
                             //   восстанавливать выбор;
                             // - иначе сохраняем текстовое значение.
-                            if (selectedValueObj) {
-                              let valueToStore = selectedOptionValue;
-                              if (typeof selectedValueObj === 'object') {
-                                if (selectedValueObj.value_id) {
-                                  valueToStore = String(selectedValueObj.value_id).trim();
-                                } else if (selectedValueObj.value) {
-                                  valueToStore = String(selectedValueObj.value).trim();
-                                }
+                            let mainValueToStore = selectedOptionValue;
+                            if (selectedValueObj && typeof selectedValueObj === 'object') {
+                              if (selectedValueObj.value_id) {
+                                mainValueToStore = String(selectedValueObj.value_id).trim();
+                              } else if (selectedValueObj.value) {
+                                mainValueToStore = String(selectedValueObj.value).trim();
                               }
+                            }
 
-                              onChangeValue(key, valueToStore);
-                            } else {
-                              // На всякий случай сохраняем то, что пришло из селекта
-                              onChangeValue(key, selectedOptionValue);
+                            onChangeValue(key, mainValueToStore);
+
+                            // Дополнительно: если у выбранного значения есть привязанные кастомные поля,
+                            // автоматически проставляем их как ОТДЕЛЬНЫЕ поля должности.
+                            // Это даёт мгновенный визуальный эффект автопроставления,
+                            // который уже делает бэкенд при сохранении.
+                            if (
+                              selectedValueObj &&
+                              typeof selectedValueObj === 'object' &&
+                              Array.isArray(selectedValueObj.linked_custom_fields)
+                            ) {
+                              selectedValueObj.linked_custom_fields.forEach(linkedField => {
+                                if (!linkedField) return;
+
+                                // Определяем ключ прилинкованного поля:
+                                // сперва из linked_custom_field_key, при его отсутствии пытаемся найти
+                                // определение по ID в списке availableCustomFields.
+                                let linkedFieldKey = linkedField.linked_custom_field_key;
+                                if (!linkedFieldKey && linkedField.linked_custom_field_id) {
+                                  const def = availableCustomFields.find(
+                                    f => String(f.id).trim() === String(linkedField.linked_custom_field_id).trim()
+                                  );
+                                  if (def) {
+                                    linkedFieldKey = def.key;
+                                  }
+                                }
+
+                                if (!linkedFieldKey) return;
+
+                                // Берём первое значение из linked_custom_field_values (на практике оно одно).
+                                if (
+                                  Array.isArray(linkedField.linked_custom_field_values) &&
+                                  linkedField.linked_custom_field_values.length > 0
+                                ) {
+                                  const firstLinkedValue = linkedField.linked_custom_field_values[0];
+                                  const rawLinkedId = firstLinkedValue?.linked_custom_field_value_id;
+                                  const rawLinkedValue = firstLinkedValue?.linked_custom_field_value;
+
+                                  let linkedValueToStore = '';
+                                  if (rawLinkedId) {
+                                    linkedValueToStore = String(rawLinkedId).trim();
+                                  } else if (rawLinkedValue) {
+                                    linkedValueToStore = String(rawLinkedValue).trim();
+                                  }
+
+                                  if (linkedValueToStore) {
+                                    onChangeValue(linkedFieldKey, linkedValueToStore);
+                                  }
+                                }
+                              });
                             }
                           }}
                         >
