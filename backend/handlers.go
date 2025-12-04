@@ -334,7 +334,7 @@ func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
 		employeeProfileURL = nil
 	}
 
-	// Process custom_fields - extract all value IDs
+	// Process custom_fields
 	// New format: custom_fields is an array with structure:
 	// [
 	//   {
@@ -351,32 +351,43 @@ func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
 	//     ]
 	//   }
 	// ]
-	// Note: custom_field_value_id is stored in custom_fields_ids
-	//       linked_custom_field_id is stored in custom_fields_ids
-	//       linked_custom_field_value_id is stored in custom_fields_values_ids
-	customFieldsIDs := make([]uuid.UUID, 0)
-	customFieldsValuesIDs := make([]uuid.UUID, 0)
+	// Note:
+	//   - В positions.custom_fields_ids храним ИМЕННО ID кастомных полей (custom_field_id)
+	//     для верхнеуровневых полей должности.
+	//   - В positions.custom_fields_values_ids храним ID значений (custom_field_value_id)
+	//     как для основного поля, так и для всех привязанных (linked_custom_field_value_id).
+	customFieldsIDs := make([]uuid.UUID, 0)         // field IDs (custom_field_id)
+	customFieldsValuesIDs := make([]uuid.UUID, 0)   // value IDs (custom_field_value_id, linked_custom_field_value_id)
 	if customFieldsRaw, ok := requestBody["custom_fields"]; ok {
 		if customFieldsArray, ok := customFieldsRaw.([]interface{}); ok {
 			// Process each custom field
 			for _, cfItem := range customFieldsArray {
 				if cfMap, ok := cfItem.(map[string]interface{}); ok {
-					// Extract custom_field_value_id (ID значения из таблицы custom_fields_values)
-					// This is the value ID that should be stored in custom_fields_ids
-					if customFieldValueIDRaw, ok := cfMap["custom_field_value_id"]; ok {
-						if customFieldValueIDStr, ok := customFieldValueIDRaw.(string); ok && customFieldValueIDStr != "" {
-							// Parse custom_field_value_id as UUID and store it in custom_fields_ids
-							if valueID, err := uuid.Parse(customFieldValueIDStr); err == nil {
-								customFieldsIDs = append(customFieldsIDs, valueID)
+					// 1) Сохраняем ID самого кастомного поля (custom_field_id) в custom_fields_ids
+					if customFieldIDRaw, ok := cfMap["custom_field_id"]; ok {
+						if customFieldIDStr, ok := customFieldIDRaw.(string); ok && customFieldIDStr != "" {
+							if fieldID, err := uuid.Parse(customFieldIDStr); err == nil {
+								customFieldsIDs = append(customFieldsIDs, fieldID)
 							}
 						}
 					}
 
-					// Process linked custom fields and extract their field IDs и value IDs
+					// 2) Сохраняем ID выбранного значения основного поля (custom_field_value_id)
+					//    в custom_fields_values_ids
+					if customFieldValueIDRaw, ok := cfMap["custom_field_value_id"]; ok {
+						if customFieldValueIDStr, ok := customFieldValueIDRaw.(string); ok && customFieldValueIDStr != "" {
+							// Parse custom_field_value_id as UUID and store it in custom_fields_values_ids
+							if valueID, err := uuid.Parse(customFieldValueIDStr); err == nil {
+								customFieldsValuesIDs = append(customFieldsValuesIDs, valueID)
+							}
+						}
+					}
+
+					// 3) Обрабатываем привязанные кастомные поля и их значения
 					if linkedFields, ok := cfMap["linked_custom_fields"].([]interface{}); ok {
 						for _, lfItem := range linkedFields {
 							if lfMap, ok := lfItem.(map[string]interface{}); ok {
-								// 1) Сохраняем ID самого привязанного кастомного поля
+								// 3.1) Сохраняем ID самого привязанного кастомного поля
 								if linkedFieldIDRaw, ok := lfMap["linked_custom_field_id"]; ok {
 									if linkedFieldIDStr, ok := linkedFieldIDRaw.(string); ok && linkedFieldIDStr != "" {
 										if fieldID, err := uuid.Parse(linkedFieldIDStr); err == nil {
@@ -386,7 +397,7 @@ func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
 									}
 								}
 
-								// 2) Сохраняем ID выбранных значений привязанных кастомных полей
+								// 3.2) Сохраняем ID выбранных значений привязанных кастомных полей
 								if linkedValues, ok := lfMap["linked_custom_field_values"].([]interface{}); ok {
 									for _, lvItem := range linkedValues {
 										if lvMap, ok := lvItem.(map[string]interface{}); ok {
@@ -478,20 +489,21 @@ func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// buildCustomFieldsArrayFromIDs builds the nested custom_fields array structure from array of value IDs
-// customFieldsValuesIDs contains the selected linked custom field value IDs (only selected ones)
+// buildCustomFieldsArrayFromIDs builds the nested custom_fields array structure
+// customFieldsIDs          - массив ID кастомных полей (custom_field_id) для позиции
+// customFieldsValuesIDs    - массив ID выбранных значений (custom_field_value_id и linked_custom_field_value_id)
 func (h *Handler) buildCustomFieldsArrayFromIDs(customFieldsIDs *UUIDArray, customFieldsValuesIDs *UUIDArray) ([]PositionCustomFieldValue, error) {
 	customFieldsArray := []PositionCustomFieldValue{}
 
-	if customFieldsIDs == nil || len(*customFieldsIDs) == 0 {
+	if customFieldsIDs == nil || len(*customFieldsIDs) == 0 || customFieldsValuesIDs == nil || len(*customFieldsValuesIDs) == 0 {
 		return customFieldsArray, nil
 	}
 
-	// Build a set of selected linked value IDs for filtering
-	selectedLinkedValueIDs := make(map[uuid.UUID]bool)
+	// Build a set of selected value IDs (как для основных, так и для привязанных значений)
+	selectedValueIDs := make(map[uuid.UUID]bool)
 	if customFieldsValuesIDs != nil {
 		for _, id := range *customFieldsValuesIDs {
-			selectedLinkedValueIDs[id] = true
+			selectedValueIDs[id] = true
 		}
 	}
 
@@ -564,7 +576,7 @@ func (h *Handler) buildCustomFieldsArrayFromIDs(customFieldsIDs *UUIDArray, cust
 	}
 	defer rows.Close()
 
-	// Build a map of custom field definitions by ID and by allowed values
+	// Build a map of custom field definitions by ID and map valueID -> fieldID
 	fieldDefsByID := make(map[uuid.UUID]CustomFieldDefinition)
 	valueToFieldMap := make(map[uuid.UUID]uuid.UUID) // Maps value ID to field ID
 	for rows.Next() {
@@ -590,20 +602,25 @@ func (h *Handler) buildCustomFieldsArrayFromIDs(customFieldsIDs *UUIDArray, cust
 		}
 	}
 
-	// Process each value ID from the position
-	processedFields := make(map[uuid.UUID]bool) // Track which fields we've already processed
-	for _, valueID := range *customFieldsIDs {
-		// Find which field this value belongs to
+	// Построим отображение: ID поля -> выбранное для него значение (valueID)
+	fieldToSelectedValue := make(map[uuid.UUID]uuid.UUID)
+	for _, valueID := range *customFieldsValuesIDs {
 		fieldID, exists := valueToFieldMap[valueID]
 		if !exists {
-			continue // Skip if value doesn't belong to any field
-		}
-
-		// Skip if we've already processed this field (take first value for each field)
-		if processedFields[fieldID] {
 			continue
 		}
-		processedFields[fieldID] = true
+		// Берём первое найденное значение для поля (предполагаем по одному значению на поле)
+		if _, already := fieldToSelectedValue[fieldID]; !already {
+			fieldToSelectedValue[fieldID] = valueID
+		}
+	}
+
+	// Process each field ID from the position (верхнеуровневые поля должности)
+	for _, fieldID := range *customFieldsIDs {
+		valueID, hasValue := fieldToSelectedValue[fieldID]
+		if !hasValue {
+			continue
+		}
 
 		fieldDef := fieldDefsByID[fieldID]
 		valueText := valueInfoMap[valueID]
@@ -656,8 +673,8 @@ func (h *Handler) buildCustomFieldsArrayFromIDs(customFieldsIDs *UUIDArray, cust
 						var linkedFieldValues []LinkedCustomFieldValue
 						for _, linkedValueID := range linkedValueUUIDs {
 							// Check if this value belongs to the linked field
-							// AND if it's in the selected linked values (custom_fields_values_ids)
-							if fieldValueSet[linkedValueID] && selectedLinkedValueIDs[linkedValueID] {
+							// AND if it's in the selected values for position (custom_fields_values_ids)
+							if fieldValueSet[linkedValueID] && selectedValueIDs[linkedValueID] {
 								// Get the value text from pre-loaded map
 								if linkedValueText, exists := valueInfoMap[linkedValueID]; exists {
 									linkedFieldValues = append(linkedFieldValues, LinkedCustomFieldValue{
@@ -1007,7 +1024,7 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 		employeeProfileURL = nil
 	}
 
-	// Process custom_fields - extract all value IDs
+	// Process custom_fields
 	// New format: custom_fields is an array with structure:
 	// [
 	//   {
@@ -1024,11 +1041,13 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 	//     ]
 	//   }
 	// ]
-	// Note: custom_field_value_id is stored in custom_fields_ids
-	//       linked_custom_field_id is stored in custom_fields_ids
-	//       linked_custom_field_value_id is stored in custom_fields_values_ids
-	customFieldsIDs := make([]uuid.UUID, 0)
-	customFieldsValuesIDs := make([]uuid.UUID, 0)
+	// Note:
+	//   - В positions.custom_fields_ids храним ИМЕННО ID кастомных полей (custom_field_id)
+	//     для верхнеуровневых полей должности.
+	//   - В positions.custom_fields_values_ids храним ID значений (custom_field_value_id)
+	//     как для основного поля, так и для всех привязанных (linked_custom_field_value_id).
+	customFieldsIDs := make([]uuid.UUID, 0)       // field IDs (custom_field_id)
+	customFieldsValuesIDs := make([]uuid.UUID, 0) // value IDs (custom_field_value_id, linked_custom_field_value_id)
 	if customFieldsRaw, ok := requestBody["custom_fields"]; ok {
 		if customFieldsArray, ok := customFieldsRaw.([]interface{}); ok {
 			log.Printf("[UpdatePosition] Processing custom_fields array with %d items", len(customFieldsArray))
@@ -1036,16 +1055,33 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 			for i, cfItem := range customFieldsArray {
 				if cfMap, ok := cfItem.(map[string]interface{}); ok {
 					log.Printf("[UpdatePosition] Processing custom field item %d: %+v", i, cfMap)
-					// Extract custom_field_value_id (ID значения из таблицы custom_fields_values)
-					// This is the value ID that should be stored in custom_fields_ids
+
+					// 1) Сохраняем ID самого кастомного поля (custom_field_id) в custom_fields_ids
+					if customFieldIDRaw, ok := cfMap["custom_field_id"]; ok {
+						if customFieldIDStr, ok := customFieldIDRaw.(string); ok && customFieldIDStr != "" {
+							if fieldID, err := uuid.Parse(customFieldIDStr); err == nil {
+								customFieldsIDs = append(customFieldsIDs, fieldID)
+								log.Printf("[UpdatePosition] Added custom_field_id to customFieldsIDs: %s", fieldID.String())
+							} else {
+								log.Printf("[UpdatePosition] Error parsing custom_field_id UUID: %v", err)
+							}
+						} else {
+							log.Printf("[UpdatePosition] custom_field_id is not a valid string or is empty: %v", customFieldIDRaw)
+						}
+					} else {
+						log.Printf("[UpdatePosition] custom_field_id not found in custom field item %d", i)
+					}
+
+					// 2) Сохраняем ID выбранного значения основного поля (custom_field_value_id)
+					//    в custom_fields_values_ids
 					if customFieldValueIDRaw, ok := cfMap["custom_field_value_id"]; ok {
 						log.Printf("[UpdatePosition] Found custom_field_value_id: %v (type: %T)", customFieldValueIDRaw, customFieldValueIDRaw)
 						if customFieldValueIDStr, ok := customFieldValueIDRaw.(string); ok && customFieldValueIDStr != "" {
 							log.Printf("[UpdatePosition] Parsing custom_field_value_id as UUID: %s", customFieldValueIDStr)
-							// Parse custom_field_value_id as UUID and store it in custom_fields_ids
+							// Parse custom_field_value_id as UUID and store it in custom_fields_values_ids
 							if valueID, err := uuid.Parse(customFieldValueIDStr); err == nil {
-								log.Printf("[UpdatePosition] Successfully parsed UUID: %s, adding to customFieldsIDs", valueID.String())
-								customFieldsIDs = append(customFieldsIDs, valueID)
+								log.Printf("[UpdatePosition] Successfully parsed UUID: %s, adding to customFieldsValuesIDs", valueID.String())
+								customFieldsValuesIDs = append(customFieldsValuesIDs, valueID)
 							} else {
 								log.Printf("[UpdatePosition] Error parsing UUID: %v", err)
 							}
@@ -1056,11 +1092,11 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[UpdatePosition] custom_field_value_id not found in custom field item %d", i)
 					}
 
-					// Process linked custom fields and extract their field IDs и value IDs
+					// 3) Обрабатываем привязанные кастомные поля и их значения
 					if linkedFields, ok := cfMap["linked_custom_fields"].([]interface{}); ok {
 						for _, lfItem := range linkedFields {
 							if lfMap, ok := lfItem.(map[string]interface{}); ok {
-								// 1) Сохраняем ID самого привязанного кастомного поля
+								// 3.1) Сохраняем ID самого привязанного кастомного поля
 								if linkedFieldIDRaw, ok := lfMap["linked_custom_field_id"]; ok {
 									if linkedFieldIDStr, ok := linkedFieldIDRaw.(string); ok && linkedFieldIDStr != "" {
 										if fieldID, err := uuid.Parse(linkedFieldIDStr); err == nil {
@@ -1070,7 +1106,7 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 									}
 								}
 
-								// 2) Сохраняем ID выбранных значений привязанных кастомных полей
+								// 3.2) Сохраняем ID выбранных значений привязанных кастомных полей
 								if linkedValues, ok := lfMap["linked_custom_field_values"].([]interface{}); ok {
 									for _, lvItem := range linkedValues {
 										if lvMap, ok := lvItem.(map[string]interface{}); ok {

@@ -244,8 +244,18 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
                       selectedKV.key === nodeKV.key && 
                       selectedKV.value === nodeKV.value;
     
-    // Получаем значение для отображения
-    const displayValue = nodeKV ? nodeKV.value : (node.custom_field_value || node.field_value || '');
+    // Получаем базовое значение (оригинальное значение поля)
+    let displayValue = nodeKV ? nodeKV.value : (node.custom_field_value || node.field_value || '');
+    // Если бэкенд передал отдельное display‑значение в deprecated‑поле field_value
+    // (например, "Основное - Прилинкованное"), используем его только для отображения.
+    if (
+      node.field_value &&
+      typeof node.field_value === 'string' &&
+      node.field_value.trim() &&
+      node.field_value !== displayValue
+    ) {
+      displayValue = node.field_value;
+    }
 
     return (
       <div className={`tree-node tree-node-field tree-node-level-${level}`}>

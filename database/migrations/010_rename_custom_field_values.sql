@@ -11,3 +11,4 @@ ALTER INDEX IF EXISTS idx_custom_field_values_id RENAME TO idx_custom_fields_val
 
 COMMIT;
 
+

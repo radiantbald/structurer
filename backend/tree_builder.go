@@ -105,7 +105,12 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 
 	// Get all positions в порядке их создания (по id)
 	rows, _ := db.Query(
-		`SELECT id, name, custom_fields_ids, employee_full_name FROM positions ORDER BY id`,
+		// ВАЖНО:
+		//  - custom_fields_ids теперь хранит ID самих кастомных полей (field_id),
+		//  - custom_fields_values_ids хранит ID выбранных значений (value_id).
+		// Для построения иерархии по значениям нам нужны ИМЕННО value_id,
+		// поэтому здесь используем custom_fields_values_ids.
+		`SELECT id, name, custom_fields_values_ids, employee_full_name FROM positions ORDER BY id`,
 	)
 	defer rows.Close()
 
@@ -123,15 +128,16 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 			CustomFields   map[string]string
 			EmployeeFullName *string
 		}
-		var customFieldsIDsJSON []byte
+		var customFieldsValuesIDsJSON []byte
 		var employeeFullName sql.NullString
-		if err := rows.Scan(&p.ID, &p.Name, &customFieldsIDsJSON, &employeeFullName); err == nil {
+		if err := rows.Scan(&p.ID, &p.Name, &customFieldsValuesIDsJSON, &employeeFullName); err == nil {
 			p.CustomFields = make(map[string]string)
-			if customFieldsIDsJSON != nil {
+			if customFieldsValuesIDsJSON != nil {
 				// Parse array of UUID strings
 				var ids []string
-				if err := json.Unmarshal(customFieldsIDsJSON, &ids); err == nil {
-					// For each value ID, find which field it belongs to and get its value
+				if err := json.Unmarshal(customFieldsValuesIDsJSON, &ids); err == nil {
+					// Для каждого value_id определяем, к какому полю он относится,
+					// и берём человекочитаемое значение из custom_fields_values.
 					for _, idStr := range ids {
 						if valueID, err := uuid.Parse(idStr); err == nil {
 							// Find which field this value belongs to
@@ -267,6 +273,67 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 
 func loadCustomFieldDefinitions(db *sql.DB) map[string]CustomFieldDefinition {
 	fieldDefsByKey := make(map[string]CustomFieldDefinition)
+
+	// Pre-load all custom field definitions for linked fields lookup
+	allFieldsRows, err := db.Query(`SELECT id, key, label FROM custom_fields`)
+	if err != nil {
+		return fieldDefsByKey
+	}
+	fieldInfoMap := make(map[uuid.UUID]struct {
+		Key   string
+		Label string
+	})
+	for allFieldsRows.Next() {
+		var fieldID uuid.UUID
+		var key, label string
+		if err := allFieldsRows.Scan(&fieldID, &key, &label); err == nil {
+			fieldInfoMap[fieldID] = struct {
+				Key   string
+				Label string
+			}{Key: key, Label: label}
+		}
+	}
+	allFieldsRows.Close()
+
+	// Pre-load all custom field values for linked values lookup
+	allValuesRows, err := db.Query(`SELECT id, value FROM custom_fields_values`)
+	if err != nil {
+		return fieldDefsByKey
+	}
+	valueInfoMap := make(map[uuid.UUID]string)
+	for allValuesRows.Next() {
+		var valueID uuid.UUID
+		var value string
+		if err := allValuesRows.Scan(&valueID, &value); err == nil {
+			valueInfoMap[valueID] = value
+		}
+	}
+	allValuesRows.Close()
+
+	// Pre-load field-to-values mapping (which values belong to which fields)
+	fieldToValuesMap := make(map[uuid.UUID]map[uuid.UUID]bool)
+	fieldsForMappingRows, err := db.Query(`SELECT id, allowed_values_ids FROM custom_fields WHERE allowed_values_ids IS NOT NULL`)
+	if err == nil {
+		for fieldsForMappingRows.Next() {
+			var fieldID uuid.UUID
+			var allowedValueIDsJSON []byte
+			if err := fieldsForMappingRows.Scan(&fieldID, &allowedValueIDsJSON); err == nil {
+				var ids []string
+				if err := json.Unmarshal(allowedValueIDsJSON, &ids); err == nil {
+					valueSet := make(map[uuid.UUID]bool)
+					for _, idStr := range ids {
+						if id, err := uuid.Parse(idStr); err == nil {
+							valueSet[id] = true
+						}
+					}
+					fieldToValuesMap[fieldID] = valueSet
+				}
+			}
+		}
+		fieldsForMappingRows.Close()
+	}
+
+	// Load custom field definitions with allowed values and linked fields
 	rows, err := db.Query(
 		`SELECT id, key, label, allowed_values_ids, created_at, updated_at
 		FROM custom_fields`,
@@ -281,27 +348,93 @@ func loadCustomFieldDefinitions(db *sql.DB) map[string]CustomFieldDefinition {
 		var allowedValueIDsJSON []byte
 		if err := rows.Scan(&f.ID, &f.Key, &f.Label, &allowedValueIDsJSON,
 			&f.CreatedAt, &f.UpdatedAt); err == nil {
-			// Load custom_fields_values and build allowed_values
+			// Load custom_fields_values and build allowed_values with linked_custom_fields
 			if allowedValueIDsJSON != nil {
 				var ids []string
 				if err := json.Unmarshal(allowedValueIDsJSON, &ids); err == nil {
 					var allowedValues AllowedValuesArray
+
 					for _, idStr := range ids {
 						if valueID, err := uuid.Parse(idStr); err == nil {
 							var cv CustomFieldValue
 							var linkedCustomFieldIDsJSON []byte
 							var linkedCustomFieldValueIDsJSON []byte
+
 							err := db.QueryRow(
 								`SELECT id, value, linked_custom_fields_ids, linked_custom_fields_values_ids, created_at, updated_at
 								FROM custom_fields_values WHERE id = $1`,
 								valueID,
 							).Scan(&cv.ID, &cv.Value, &linkedCustomFieldIDsJSON, &linkedCustomFieldValueIDsJSON, &cv.CreatedAt, &cv.UpdatedAt)
 							if err == nil {
-								// LinkedCustomFields is no longer stored in DB, set empty array
+								// Build linked_custom_fields structure
+								linkedCustomFields := []LinkedCustomField{}
+
+								if linkedCustomFieldIDsJSON != nil && linkedCustomFieldValueIDsJSON != nil {
+									var linkedFieldIDs []string
+									var linkedValueIDs []string
+
+									if err := json.Unmarshal(linkedCustomFieldIDsJSON, &linkedFieldIDs); err == nil {
+										if err := json.Unmarshal(linkedCustomFieldValueIDsJSON, &linkedValueIDs); err == nil {
+											// Parse all linked field IDs
+											linkedFieldUUIDs := make([]uuid.UUID, 0, len(linkedFieldIDs))
+											for _, idStr := range linkedFieldIDs {
+												if id, err := uuid.Parse(idStr); err == nil {
+													linkedFieldUUIDs = append(linkedFieldUUIDs, id)
+												}
+											}
+
+											// Parse all linked value IDs
+											linkedValueUUIDs := make([]uuid.UUID, 0, len(linkedValueIDs))
+											for _, idStr := range linkedValueIDs {
+												if id, err := uuid.Parse(idStr); err == nil {
+													linkedValueUUIDs = append(linkedValueUUIDs, id)
+												}
+											}
+
+											// For each linked field, find which values belong to it
+											for _, linkedFieldID := range linkedFieldUUIDs {
+												fieldInfo, fieldExists := fieldInfoMap[linkedFieldID]
+												if !fieldExists {
+													continue
+												}
+
+												// Find values that belong to this field
+												fieldValueSet, hasValues := fieldToValuesMap[linkedFieldID]
+												if !hasValues {
+													continue
+												}
+
+												var linkedFieldValues []LinkedCustomFieldValue
+												for _, valueID := range linkedValueUUIDs {
+													// Check if this value belongs to the linked field
+													if fieldValueSet[valueID] {
+														// Get the value text from pre-loaded map
+														if valueText, exists := valueInfoMap[valueID]; exists {
+															linkedFieldValues = append(linkedFieldValues, LinkedCustomFieldValue{
+																LinkedCustomFieldValueID: valueID,
+																LinkedCustomFieldValue:   valueText,
+															})
+														}
+													}
+												}
+
+												if len(linkedFieldValues) > 0 {
+													linkedCustomFields = append(linkedCustomFields, LinkedCustomField{
+														LinkedCustomFieldID:     linkedFieldID,
+														LinkedCustomFieldKey:    fieldInfo.Key,
+														LinkedCustomFieldLabel:  fieldInfo.Label,
+														LinkedCustomFieldValues: linkedFieldValues,
+													})
+												}
+											}
+										}
+									}
+								}
+
 								allowedValues = append(allowedValues, AllowedValue{
 									ValueID:            cv.ID,
 									Value:              cv.Value,
-									LinkedCustomFields: []LinkedCustomField{},
+									LinkedCustomFields: linkedCustomFields,
 								})
 							}
 						}
@@ -312,6 +445,7 @@ func loadCustomFieldDefinitions(db *sql.DB) map[string]CustomFieldDefinition {
 			fieldDefsByKey[f.Key] = f
 		}
 	}
+
 	return fieldDefsByKey
 }
 
@@ -531,20 +665,20 @@ func buildTreeLevel(positions []struct {
 						return linkedValues[i].order < linkedValues[j].order
 					})
 
-					// Build folder name: "main value (linked value 1, linked value 2, ...)"
-					folderName := mainValueName
-					if len(linkedValues) > 0 {
-						folderName += " ("
-						for i, lv := range linkedValues {
-							if i > 0 {
-								folderName += ", "
-							}
-							folderName += lv.valueName
+					// Строка с основной и прилинкованными величинами, используется только
+					// как display‑label, а не как "истинное" значение поля.
+					// Основное значение сохраняем отдельно и не модифицируем.
+					combinedName := mainValueName
+					for _, lv := range linkedValues {
+						if lv.valueName == "" {
+							continue
 						}
-						folderName += ")"
+						combinedName += " - " + lv.valueName
 					}
-					
-					linkedValueGroups[folderName] = append(linkedValueGroups[folderName], pos)
+
+					// Для группировки веток используем комбинированное имя, чтобы разные
+					// комбинации прилинкованных значений расходились по разным веткам.
+					linkedValueGroups[combinedName] = append(linkedValueGroups[combinedName], pos)
 				} else {
 					positionsWithoutLinkedValue = append(positionsWithoutLinkedValue, pos)
 				}
@@ -561,19 +695,68 @@ func buildTreeLevel(positions []struct {
 
 				children := buildTreeLevel(groupPositions, levels, levelIndex+1, newPath, fieldDefsByKey, treeLevelFieldKeys)
 
-				// Build linked custom fields (all linked fields from definition)
-				linkedFields := buildLinkedCustomFields(matchedAllowedValue)
+				// Build linked custom fields based on фактических значений должностей в этой группе.
+				var linkedFields []LinkedCustomField
+				if matchedAllowedValue != nil && len(matchedAllowedValue.LinkedCustomFields) > 0 && len(groupPositions) > 0 {
+					// Берём первую должность из группы как репрезентативную:
+					// по построению группы у всех одинаковая комбинация прилинкованных значений.
+					repPos := groupPositions[0]
+
+					for _, lf := range matchedAllowedValue.LinkedCustomFields {
+						linkedFieldKey := lf.LinkedCustomFieldKey
+						rawVal, ok := repPos.CustomFields[linkedFieldKey]
+						if !ok || rawVal == "" {
+							continue
+						}
+
+						valueText := rawVal
+						valueID := uuid.Nil
+
+						// Пытаемся найти value_id и нормализованный текст по определению самого
+						// прилинкованного поля (а не по основному значению).
+						if linkedFieldDef, ok := fieldDefsByKey[linkedFieldKey]; ok && linkedFieldDef.AllowedValues != nil {
+							for _, av := range *linkedFieldDef.AllowedValues {
+								if rawVal == av.ValueID.String() || rawVal == av.Value {
+									valueID = av.ValueID
+									valueText = av.Value
+									break
+								}
+							}
+						}
+
+						if valueText == "" {
+							continue
+						}
+
+						linkedFields = append(linkedFields, LinkedCustomField{
+							LinkedCustomFieldID:    lf.LinkedCustomFieldID,
+							LinkedCustomFieldKey:   lf.LinkedCustomFieldKey,
+							LinkedCustomFieldLabel: lf.LinkedCustomFieldLabel,
+							LinkedCustomFieldValues: []LinkedCustomFieldValue{
+								{
+									LinkedCustomFieldValueID:   valueID,
+									LinkedCustomFieldValue:     valueText,
+								},
+							},
+						})
+					}
+				}
 
 				customFieldID := fieldDef.ID.String()
 				customFieldKey := fieldKey
-				customFieldValue := folderName // Use folderName which contains "main value - linked value 1 - linked value 2"
+				// В custom_field_value храним оригинальное значение поля (без " - "),
+				// а комбинированную строку кладём в устаревшее поле field_value
+				// только для отображения на фронтенде.
+				originalValue := mainValueName
+				displayValue := folderName
 
 				nodes = append(nodes, TreeNode{
-					Type:              "custom_field_value",
+					Type:               "custom_field_value",
 					LevelOrder:         &levelOrder,
 					CustomFieldID:      &customFieldID,
 					CustomFieldKey:     &customFieldKey,
-					CustomFieldValue:   &customFieldValue,
+					CustomFieldValue:   &originalValue,
+					FieldValue:         &displayValue,
 					LinkedCustomFields: linkedFields,
 					Children:           children,
 				})

@@ -14,3 +14,4 @@ ALTER TABLE custom_fields_values RENAME COLUMN linked_custom_field_value_ids TO 
 
 COMMIT;
 
+
