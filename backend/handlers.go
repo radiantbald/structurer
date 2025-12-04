@@ -1446,7 +1446,32 @@ func (h *Handler) CreateCustomField(w http.ResponseWriter, r *http.Request) {
 				(*f.AllowedValues)[i].ValueID = uuid.New()
 			}
 			allowedValueIDs = append(allowedValueIDs, (*f.AllowedValues)[i].ValueID)
+		}
+	}
 
+	// Prepare JSONB array for allowed_values_ids
+	allowedValueIDsArray := UUIDArray(allowedValueIDs)
+	allowedValueIDsJSON, _ := allowedValueIDsArray.Value()
+
+	// First, create the custom field itself (must exist before creating values due to FK constraint)
+	_, err = tx.Exec(
+		`INSERT INTO custom_fields (id, key, label, allowed_values_ids, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())`,
+		f.ID, f.Key, f.Label, allowedValueIDsJSON,
+	)
+
+	if err != nil {
+		if strings.Contains(err.Error(), "duplicate key") {
+			http.Error(w, "Field with this key already exists", http.StatusConflict)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Now create the values (field must exist first due to FK constraint)
+	if f.AllowedValues != nil {
+		for i := range *f.AllowedValues {
 			// Generate value_id for linked custom field values if not present
 			var linkedCustomFieldIDs []uuid.UUID
 			var linkedCustomFieldValueIDs []uuid.UUID
@@ -1467,15 +1492,17 @@ func (h *Handler) CreateCustomField(w http.ResponseWriter, r *http.Request) {
 			linkedCustomFieldValueIDsJSON, _ := linkedCustomFieldValueIDsArray.Value()
 
 			_, err = tx.Exec(
-				`INSERT INTO custom_fields_values (id, value, linked_custom_fields_ids, linked_custom_fields_values_ids, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, NOW(), NOW())
+				`INSERT INTO custom_fields_values (id, value, custom_field_id, linked_custom_fields_ids, linked_custom_fields_values_ids, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
 				ON CONFLICT (id) DO UPDATE SET
 					value = EXCLUDED.value,
+					custom_field_id = EXCLUDED.custom_field_id,
 					linked_custom_fields_ids = EXCLUDED.linked_custom_fields_ids,
 					linked_custom_fields_values_ids = EXCLUDED.linked_custom_fields_values_ids,
 					updated_at = NOW()`,
 				(*f.AllowedValues)[i].ValueID,
 				(*f.AllowedValues)[i].Value,
+				f.ID,
 				linkedCustomFieldIDsJSON,
 				linkedCustomFieldValueIDsJSON,
 			)
@@ -1484,25 +1511,6 @@ func (h *Handler) CreateCustomField(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-	}
-
-	// Prepare JSONB array for allowed_values_ids
-	allowedValueIDsArray := UUIDArray(allowedValueIDs)
-	allowedValueIDsJSON, _ := allowedValueIDsArray.Value()
-
-	_, err = tx.Exec(
-		`INSERT INTO custom_fields (id, key, label, allowed_values_ids, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, NOW(), NOW())`,
-		f.ID, f.Key, f.Label, allowedValueIDsJSON,
-	)
-
-	if err != nil {
-		if strings.Contains(err.Error(), "duplicate key") {
-			http.Error(w, "Field with this key already exists", http.StatusConflict)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
 	}
 
 	// Commit transaction
@@ -1579,15 +1587,17 @@ func (h *Handler) UpdateCustomField(w http.ResponseWriter, r *http.Request) {
 			linkedCustomFieldValueIDsJSON, _ := linkedCustomFieldValueIDsArray.Value()
 
 			_, err = tx.Exec(
-				`INSERT INTO custom_fields_values (id, value, linked_custom_fields_ids, linked_custom_fields_values_ids, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, NOW(), NOW())
+				`INSERT INTO custom_fields_values (id, value, custom_field_id, linked_custom_fields_ids, linked_custom_fields_values_ids, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
 				ON CONFLICT (id) DO UPDATE SET
 					value = EXCLUDED.value,
+					custom_field_id = EXCLUDED.custom_field_id,
 					linked_custom_fields_ids = EXCLUDED.linked_custom_fields_ids,
 					linked_custom_fields_values_ids = EXCLUDED.linked_custom_fields_values_ids,
 					updated_at = NOW()`,
 				(*f.AllowedValues)[i].ValueID,
 				(*f.AllowedValues)[i].Value,
+				id,
 				linkedCustomFieldIDsJSON,
 				linkedCustomFieldValueIDsJSON,
 			)
@@ -1663,6 +1673,7 @@ func (h *Handler) DeleteCustomField(w http.ResponseWriter, r *http.Request) {
 
 	// Get field key before deletion
 	var fieldKey string
+	log.Printf("[DeleteCustomField] Deleting custom field %s", id.String())
 	err = h.db.QueryRow(
 		"SELECT key FROM custom_fields WHERE id = $1",
 		id,
@@ -1680,12 +1691,14 @@ func (h *Handler) DeleteCustomField(w http.ResponseWriter, r *http.Request) {
 	// Start transaction to ensure atomicity
 	tx, err := h.db.Begin()
 	if err != nil {
+		log.Printf("[DeleteCustomField] begin tx error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer tx.Rollback()
 
-	// Get allowed_values_ids for this field to remove them from positions
+	// Get allowed_values_ids for this field to remove them (and the field itself)
+	// from all positions.
 	var allowedValueIDsJSON []byte
 	err = tx.QueryRow(
 		`SELECT allowed_values_ids FROM custom_fields WHERE id = $1`,
@@ -1693,104 +1706,180 @@ func (h *Handler) DeleteCustomField(w http.ResponseWriter, r *http.Request) {
 	).Scan(&allowedValueIDsJSON)
 
 	if err == nil && allowedValueIDsJSON != nil {
+		log.Printf("[DeleteCustomField] Loaded allowed_values_ids for field %s", id.String())
 		var valueIDs []string
 		if err := json.Unmarshal(allowedValueIDsJSON, &valueIDs); err == nil && len(valueIDs) > 0 {
-			// Remove all value IDs that belong to this field from all positions.
-			// Реализуем это в Go, чтобы избежать сложных SQL-конструкций,
-			// которые приводили к ошибкам парсинга в pq.
-
-			// Подготовим set для быстрого поиска ID
+			// Prepare sets for fast lookup:
+			// - valueSet: all value IDs belonging to this field
+			// - fieldIDStr: ID of the field itself to remove from positions.custom_fields_ids
 			valueSet := make(map[string]struct{}, len(valueIDs))
 			for _, v := range valueIDs {
 				valueSet[v] = struct{}{}
 			}
+			fieldIDStr := id.String()
 
-			// Пройдем по всем позициям с непустыми custom_fields_ids
-			rows, err := tx.Query(`SELECT id, custom_fields_ids FROM positions WHERE custom_fields_ids IS NOT NULL`)
+			// Iterate over all positions that have custom fields assigned.
+			// ВАЖНО: мы сначала собираем все изменения в память, а затем выполняем UPDATE,
+			// чтобы не вызывать Exec на том же соединении, пока открыт rows (иначе pq путается
+			// в протоколе и выдаёт "unexpected Parse response 'C'").
+			rows, err := tx.Query(`
+				SELECT id, custom_fields_ids, custom_fields_values_ids 
+				FROM positions 
+				WHERE custom_fields_ids IS NOT NULL OR custom_fields_values_ids IS NOT NULL`)
 			if err != nil {
+				log.Printf("[DeleteCustomField] query positions error: %v", err)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 			defer rows.Close()
 
+			// Буфер обновлений, которые нужно выполнить.
+			type positionUpdate struct {
+				id             int64
+				cfIDsJSON      []byte
+				cfValuesJSON   []byte
+			}
+			var updates []positionUpdate
+
 			for rows.Next() {
 				var positionID int64
-				var cfJSON []byte
-				if err := rows.Scan(&positionID, &cfJSON); err != nil {
+				var cfIDsJSON, cfValuesJSON []byte
+				if err := rows.Scan(&positionID, &cfIDsJSON, &cfValuesJSON); err != nil {
+					log.Printf("[DeleteCustomField] scan position row error: %v", err)
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
 
-				// custom_fields_ids хранится как JSON-массив строк UUID
+				// custom_fields_ids and custom_fields_values_ids are stored
+				// as JSON arrays of UUID strings.
 				var cfIDs []string
-				if err := json.Unmarshal(cfJSON, &cfIDs); err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
+				if cfIDsJSON != nil {
+					if err := json.Unmarshal(cfIDsJSON, &cfIDs); err != nil {
+						log.Printf("[DeleteCustomField] unmarshal custom_fields_ids error: %v", err)
+						http.Error(w, err.Error(), http.StatusInternalServerError)
+						return
+					}
 				}
 
-				// Отфильтруем значения, которые относятся к удаляемому полю
-				changed := false
-				var filtered []string
-				for _, idStr := range cfIDs {
-					if _, toRemove := valueSet[idStr]; toRemove {
-						changed = true
-						continue
+				var cfValueIDs []string
+				if cfValuesJSON != nil {
+					if err := json.Unmarshal(cfValuesJSON, &cfValueIDs); err != nil {
+						log.Printf("[DeleteCustomField] unmarshal custom_fields_values_ids error: %v", err)
+						http.Error(w, err.Error(), http.StatusInternalServerError)
+						return
 					}
-					filtered = append(filtered, idStr)
+				}
+
+				changed := false
+
+				// 1) Remove the field ID itself from custom_fields_ids
+				if len(cfIDs) > 0 {
+					var filteredFieldIDs []string
+					for _, idStr := range cfIDs {
+						if idStr == fieldIDStr {
+							changed = true
+							continue
+						}
+						filteredFieldIDs = append(filteredFieldIDs, idStr)
+					}
+					cfIDs = filteredFieldIDs
+				}
+
+				// 2) Remove all value IDs that belong to this field
+				if len(cfValueIDs) > 0 {
+					var filteredValueIDs []string
+					for _, v := range cfValueIDs {
+						if _, toRemove := valueSet[v]; toRemove {
+							changed = true
+							continue
+						}
+						filteredValueIDs = append(filteredValueIDs, v)
+					}
+					cfValueIDs = filteredValueIDs
 				}
 
 				if !changed {
 					continue
 				}
 
-				// Сериализуем обратно в JSONB
-				newJSON, err := json.Marshal(filtered)
+				newCFIDsJSON, err := json.Marshal(cfIDs)
 				if err != nil {
+					log.Printf("[DeleteCustomField] marshal new custom_fields_ids error: %v", err)
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
 
-				// Обновим позицию
-				_, err = tx.Exec(
-					`UPDATE positions 
-					SET custom_fields_ids = $1, updated_at = NOW()
-					WHERE id = $2`,
-					newJSON,
-					positionID,
-				)
+				newCFValuesJSON, err := json.Marshal(cfValueIDs)
 				if err != nil {
+					log.Printf("[DeleteCustomField] marshal new custom_fields_values_ids error: %v", err)
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
+
+				updates = append(updates, positionUpdate{
+					id:           positionID,
+					cfIDsJSON:    newCFIDsJSON,
+					cfValuesJSON: newCFValuesJSON,
+				})
 			}
 			if err := rows.Err(); err != nil {
+				log.Printf("[DeleteCustomField] rows.Err(): %v", err)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
+			}
+
+			// Выполняем UPDATE по всем накопленным позициям.
+			for _, upd := range updates {
+				_, err = tx.Exec(
+					`UPDATE positions 
+					SET custom_fields_ids = $1, custom_fields_values_ids = $2, updated_at = NOW()
+					WHERE id = $3`,
+					upd.cfIDsJSON,
+					upd.cfValuesJSON,
+					upd.id,
+				)
+				if err != nil {
+					log.Printf("[DeleteCustomField] update position %d error: %v", upd.id, err)
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
 			}
 		}
 	}
 	if err != nil {
+		log.Printf("[DeleteCustomField] error loading allowed_values_ids: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Remove levels from tree_definitions that use this custom field
-	// We need to filter out levels where custom_field_key matches the deleted field
-	rows, err := tx.Query(
+	// Remove levels from tree_definitions that use this custom field.
+	// IMPORTANT: we first collect all updates in memory, then run UPDATEs,
+	// to avoid issuing Exec on the same connection while rows are still open
+	// (which caused "pq: unexpected Parse response 'C'").
+	type treeUpdate struct {
+		id           uuid.UUID
+		levelsJSON   []byte
+	}
+
+	treeRows, err := tx.Query(
 		`SELECT id, levels FROM tree_definitions 
 		WHERE levels::text LIKE '%' || $1 || '%'`,
 		fieldKey,
 	)
 	if err != nil {
+		log.Printf("[DeleteCustomField] query tree_definitions error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	defer rows.Close()
+	defer treeRows.Close()
 
-	for rows.Next() {
+	var treeUpdates []treeUpdate
+
+	for treeRows.Next() {
 		var treeID uuid.UUID
 		var levelsJSON []byte
-		if err := rows.Scan(&treeID, &levelsJSON); err != nil {
+		if err := treeRows.Scan(&treeID, &levelsJSON); err != nil {
+			log.Printf("[DeleteCustomField] scan tree_definitions row error: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -1798,6 +1887,7 @@ func (h *Handler) DeleteCustomField(w http.ResponseWriter, r *http.Request) {
 		// Parse levels JSON
 		var levels []TreeLevel
 		if err := json.Unmarshal(levelsJSON, &levels); err != nil {
+			log.Printf("[DeleteCustomField] unmarshal levels JSON error: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -1810,33 +1900,43 @@ func (h *Handler) DeleteCustomField(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Update tree with filtered levels
 		filteredLevelsJSON, _ := json.Marshal(filteredLevels)
+		treeUpdates = append(treeUpdates, treeUpdate{
+			id:         treeID,
+			levelsJSON: filteredLevelsJSON,
+		})
+	}
+	if err = treeRows.Err(); err != nil {
+		log.Printf("[DeleteCustomField] tree_definitions rows.Err(): %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	for _, upd := range treeUpdates {
 		_, err = tx.Exec(
 			`UPDATE tree_definitions 
 			SET levels = $1, updated_at = NOW() 
 			WHERE id = $2`,
-			filteredLevelsJSON, treeID,
+			upd.levelsJSON, upd.id,
 		)
 		if err != nil {
+			log.Printf("[DeleteCustomField] update tree_definitions %s error: %v", upd.id.String(), err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-	}
-	if err = rows.Err(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
 	}
 
 	// Delete the custom field definition
 	_, err = tx.Exec("DELETE FROM custom_fields WHERE id = $1", id)
 	if err != nil {
+		log.Printf("[DeleteCustomField] delete custom_fields error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// Commit transaction
 	if err = tx.Commit(); err != nil {
+		log.Printf("[DeleteCustomField] tx commit error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

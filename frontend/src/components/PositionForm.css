@@ -1,6 +1,8 @@
 .position-form {
   width: 100%;
   max-width: 100%;
+  /* Контейнер карточки занимает всю доступную высоту,
+     скролл организуем на родителе (.position-details-panel) */
 }
 
 .position-form-header {
@@ -12,6 +14,11 @@
   border-bottom: 2px solid #ddd;
   width: 100%;
   box-sizing: border-box;
+   /* Фиксируем шапку при вертикальном скролле карточки */
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background-color: #f9fafb;
 }
 
 .position-form-header-content {

@@ -16,6 +16,49 @@ const isFieldValueNode = (node) => {
   return node.type === 'field_value' || node.type === 'custom_field_value';
 };
 
+// Формирование комбинированного названия узла (как в дереве слева):
+// основное значение + все прилинкованные значения через тире.
+// Источник данных:
+// - node.custom_field_value / node.field_value / node.custom_field_key
+// - node.linked_custom_fields[].linked_custom_field_values[].linked_custom_field_value
+const buildCombinedFieldLabel = (node) => {
+  const nodeKV = getNodeKeyValue(node);
+  const baseValue =
+    (nodeKV && nodeKV.value) ||
+    node.custom_field_value ||
+    node.field_value ||
+    '';
+
+  // Нет прилинкованных значений — возвращаем базовое
+  if (!node.linked_custom_fields || !Array.isArray(node.linked_custom_fields)) {
+    return baseValue;
+  }
+
+  const linkedNames = [];
+
+  node.linked_custom_fields.forEach((lf) => {
+    if (!lf || !Array.isArray(lf.linked_custom_field_values)) {
+      return;
+    }
+    lf.linked_custom_field_values.forEach((lv) => {
+      if (
+        lv &&
+        typeof lv.linked_custom_field_value === 'string' &&
+        lv.linked_custom_field_value.trim()
+      ) {
+        linkedNames.push(lv.linked_custom_field_value.trim());
+      }
+    });
+  });
+
+  if (linkedNames.length === 0) {
+    return baseValue;
+  }
+
+  // Комбинированное название: "Основное - Прилинк1 - Прилинк2"
+  return [baseValue, ...linkedNames].join(' - ');
+};
+
 // Вспомогательная функция для рекурсивного подсчета всех позиций в поддереве
 const countAllPositions = (node) => {
   if (!node) return 0;
@@ -160,9 +203,9 @@ function ChildrenListPanel({ node, onPositionSelect, onNodeSelect }) {
         }
       };
       
-      // Получаем значение для отображения
-      const nodeKV = getNodeKeyValue(child);
-      const displayValue = nodeKV ? nodeKV.value : (child.custom_field_value || child.field_value || 'Без названия');
+      // Получаем комбинированное значение для отображения:
+      // основное + прилинкованные значения через тире
+      const displayValue = buildCombinedFieldLabel(child) || 'Без названия';
       
       // Формируем информацию о количестве (сначала подразделения, потом сотрудники)
       const countParts = [];
@@ -202,8 +245,10 @@ function ChildrenListPanel({ node, onPositionSelect, onNodeSelect }) {
       return node.position_name || `Должность #${node.position_id}`;
     }
     if (isFieldValueNode(node)) {
-      const nodeKV = getNodeKeyValue(node);
-      return nodeKV ? nodeKV.value : (node.custom_field_value || node.field_value || 'Узел');
+      // В заголовке узла показываем полное название:
+      // основное значение и все прилинкованные значения через тире
+      const combined = buildCombinedFieldLabel(node);
+      return combined || 'Узел';
     }
     return 'Узел';
   };

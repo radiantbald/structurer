@@ -3,12 +3,25 @@ import axios from 'axios';
 import TreeView from './TreeView';
 import TreeSelector from './TreeSelector';
 import { buildTreeStructureLocally } from '../utils/treeBuilder';
+import { convertCustomFieldsObjectToArray } from '../utils/customFields';
 import './TreePanel.css';
 
 const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:8080/api';
 const STORAGE_KEY_SELECTED_TREE_ID = 'selectedTreeId';
 
-function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onShowTreeDefinition, onShowCustomFields, onPositionCreated, onNodeSelect, selectedNode, selectedPositionId, onTreeStructureChange }) {
+function TreePanel({
+  onPositionSelect,
+  refreshTrigger,
+  treeRefreshTrigger,
+  onShowTreeDefinition,
+  onShowCustomFields,
+  onPositionCreated,
+  onNodeSelect,
+  selectedNode,
+  selectedPositionId,
+  onTreeStructureChange,
+  deletedCustomField,
+}) {
   const [trees, setTrees] = useState([]);
   const [selectedTreeId, setSelectedTreeId] = useState(() => {
     const saved = localStorage.getItem(STORAGE_KEY_SELECTED_TREE_ID);
@@ -21,6 +34,7 @@ function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onSho
   const [loading, setLoading] = useState(true);
   const [loadingTree, setLoadingTree] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [customFields, setCustomFields] = useState([]);
   const positionsRef = useRef([]);
   const allPositionsRef = useRef([]);
 
@@ -28,6 +42,7 @@ function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onSho
   useEffect(() => {
     loadTrees();
     loadPositions();
+    loadCustomFields();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -179,6 +194,53 @@ function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onSho
       alert('Ошибка при загрузке должностей: ' + (error.response?.data?.error || error.message));
     }
   };
+
+  const loadCustomFields = async () => {
+    try {
+      const response = await axios.get(`${API_BASE}/custom-fields`);
+      setCustomFields(response.data || []);
+    } catch (error) {
+      console.error('Failed to load custom fields in TreePanel:', error);
+    }
+  };
+
+  // Реактивно удаляем кастомное поле из локального списка позиций и дерева,
+  // когда оно было удалено в форме кастомных полей, чтобы не ждать перезапроса с бэкенда
+  useEffect(() => {
+    if (!deletedCustomField || !deletedCustomField.key) {
+      return;
+    }
+
+    const fieldKey = deletedCustomField.key;
+
+    const stripFieldFromPositions = (positions) =>
+      positions.map(pos => {
+        if (!pos.custom_fields || typeof pos.custom_fields !== 'object') {
+          return pos;
+        }
+        if (!(fieldKey in pos.custom_fields)) {
+          return pos;
+        }
+        const { [fieldKey]: _removed, ...rest } = pos.custom_fields;
+        return {
+          ...pos,
+          custom_fields: rest,
+        };
+      });
+
+    // Обновляем все локальные коллекции позиций
+    allPositionsRef.current = stripFieldFromPositions(allPositionsRef.current);
+    const updatedPositions = stripFieldFromPositions(positionsRef.current);
+    positionsRef.current = updatedPositions;
+    setPositions(updatedPositions);
+
+    // Перестраиваем структуру дерева локально, без ожидания ответа сервера
+    if (selectedTreeId && selectedTreeId !== '') {
+      rebuildTreeStructureLocally(selectedTreeId);
+    } else {
+      rebuildFlatStructureLocally();
+    }
+  }, [deletedCustomField]);
 
   // Функция для проверки, соответствует ли позиция поисковому запросу
   const matchesSearch = (position, query) => {
@@ -434,16 +496,300 @@ function TreePanel({ onPositionSelect, refreshTrigger, treeRefreshTrigger, onSho
     localStorage.setItem(STORAGE_KEY_SELECTED_TREE_ID, newTreeId);
   };
 
-  const handleCreateFromNode = async (path, initialName) => {
+  // Строит массив custom_fields только из конкретного узла дерева (без предков),
+  // используя определения кастомных полей. Нужен для точного переноса прилинкованных
+  // значений при быстром создании должности в узле.
+  const buildCustomFieldsFromNode = (node, customFieldsDefinitions) => {
+    if (!node) {
+      console.log('[buildCustomFieldsFromNode] No node provided');
+      return [];
+    }
+    
+    // Поддержка как нового формата (custom_field_key), так и старого (field_key)
+    const hasKey = node.custom_field_key || node.field_key;
+    if (!hasKey) {
+      console.log('[buildCustomFieldsFromNode] Node has no key:', node);
+      return [];
+    }
+
+    const defs = Array.isArray(customFieldsDefinitions) ? customFieldsDefinitions : [];
+    const mainKey = node.custom_field_key || node.field_key;
+    const mainValue =
+      (node.custom_field_value && String(node.custom_field_value).trim()) ||
+      (node.field_value && String(node.field_value).trim()) ||
+      '';
+
+    console.log('[buildCustomFieldsFromNode] Processing node:', {
+      mainKey,
+      mainValue,
+      hasLinkedFields: !!node.linked_custom_fields,
+      linkedFieldsCount: node.linked_custom_fields?.length || 0
+    });
+
+    if (!mainKey || !mainValue) {
+      console.log('[buildCustomFieldsFromNode] Missing key or value');
+      return [];
+    }
+
+    const fieldDef = defs.find((f) => f && f.key === mainKey);
+    if (!fieldDef || !Array.isArray(fieldDef.allowed_values)) {
+      console.log('[buildCustomFieldsFromNode] Field definition not found or no allowed_values:', {
+        mainKey,
+        fieldDefFound: !!fieldDef,
+        allowedValuesCount: fieldDef?.allowed_values?.length || 0
+      });
+      return [];
+    }
+
+    // Находим выбранное основное значение по тексту/ID
+    const matchedMain = fieldDef.allowed_values.find((av) => {
+      if (!av) return false;
+      const valueStr = av.value ? String(av.value).trim() : '';
+      const idStr = av.value_id
+        ? (typeof av.value_id === 'string'
+            ? av.value_id.trim()
+            : String(av.value_id))
+        : '';
+      return valueStr === mainValue || idStr === mainValue;
+    });
+
+    if (!matchedMain) {
+      console.log('[buildCustomFieldsFromNode] Main value not found in allowed_values:', mainValue);
+      return [];
+    }
+    
+    console.log('[buildCustomFieldsFromNode] Found main value:', {
+      value: matchedMain.value,
+      value_id: matchedMain.value_id,
+      hasLinkedFields: !!matchedMain.linked_custom_fields,
+      linkedFieldsCount: matchedMain.linked_custom_fields?.length || 0
+    });
+
+    const item = {
+      custom_field_id: fieldDef.id,
+    };
+
+    if (matchedMain.value_id) {
+      const valueId =
+        typeof matchedMain.value_id === 'string'
+          ? matchedMain.value_id.trim()
+          : String(matchedMain.value_id);
+      if (valueId) {
+        item.custom_field_value_id = valueId;
+      }
+    }
+
+    // Если у основного значения есть прилинкованные поля, переносим ИМЕННО те,
+    // которые заданы в узле (node.linked_custom_fields[*].linked_custom_field_values).
+    if (
+      node.linked_custom_fields &&
+      Array.isArray(node.linked_custom_fields) &&
+      node.linked_custom_fields.length > 0 &&
+      matchedMain.linked_custom_fields &&
+      Array.isArray(matchedMain.linked_custom_fields) &&
+      matchedMain.linked_custom_fields.length > 0
+    ) {
+      const linkedFieldValuesByField = {};
+
+      node.linked_custom_fields.forEach((lf) => {
+        if (
+          !lf ||
+          !lf.linked_custom_field_id ||
+          !Array.isArray(lf.linked_custom_field_values)
+        ) {
+          return;
+        }
+
+        // Находим соответствующее определение linked‑поля в matchedMain
+        const defForLinked = matchedMain.linked_custom_fields.find((defLf) => {
+          if (!defLf || !defLf.linked_custom_field_id) return false;
+          const defId =
+            typeof defLf.linked_custom_field_id === 'string'
+              ? defLf.linked_custom_field_id.trim()
+              : String(defLf.linked_custom_field_id);
+          const nodeId =
+            typeof lf.linked_custom_field_id === 'string'
+              ? lf.linked_custom_field_id.trim()
+              : String(lf.linked_custom_field_id);
+          return defId === nodeId;
+        });
+
+        const fieldIdKey =
+          typeof lf.linked_custom_field_id === 'string'
+            ? lf.linked_custom_field_id.trim()
+            : String(lf.linked_custom_field_id);
+
+        if (!defForLinked || !Array.isArray(defForLinked.linked_custom_field_values)) {
+          console.log('[buildCustomFieldsFromNode] Linked field definition not found:', {
+            nodeLinkedFieldId: fieldIdKey,
+            availableLinkedFields: matchedMain.linked_custom_fields.map(l => ({
+              id: l.linked_custom_field_id,
+              key: l.linked_custom_field_key
+            }))
+          });
+          return;
+        }
+        
+        console.log('[buildCustomFieldsFromNode] Processing linked field:', {
+          linkedFieldId: fieldIdKey,
+          valuesInNode: lf.linked_custom_field_values.length,
+          valuesInDefinition: defForLinked.linked_custom_field_values.length
+        });
+
+        if (!linkedFieldValuesByField[fieldIdKey]) {
+          linkedFieldValuesByField[fieldIdKey] = {
+            linked_custom_field_id: fieldIdKey,
+            linked_custom_field_values: [],
+          };
+        }
+
+        // Для каждого значения в узле находим соответствующий value_id в определении
+        lf.linked_custom_field_values.forEach((lv) => {
+          if (!lv) return;
+          
+          // Сначала пытаемся использовать linked_custom_field_value_id напрямую из узла
+          // Если ID есть в узле, значит он уже правильный и мы можем использовать его напрямую
+          const nodeValueId = lv.linked_custom_field_value_id
+            ? (typeof lv.linked_custom_field_value_id === 'string'
+                ? lv.linked_custom_field_value_id.trim()
+                : String(lv.linked_custom_field_value_id))
+            : null;
+          
+          // Также берем текст для сопоставления (если ID нет)
+          const text = lv.linked_custom_field_value
+            ? String(lv.linked_custom_field_value).trim()
+            : '';
+          
+          if (!nodeValueId && !text) return;
+
+          let finalValueId = null;
+          
+          // Если есть ID в узле, используем его напрямую (без проверки в определении)
+          // Это правильный подход, так как ID в узле уже является правильным идентификатором
+          if (nodeValueId) {
+            finalValueId = nodeValueId;
+          } else if (text) {
+            // Если ID нет, ищем по тексту в определении
+            const matchedLinked = defForLinked.linked_custom_field_values.find((defVal) => {
+              if (!defVal || !defVal.linked_custom_field_value) return false;
+              const defText = String(defVal.linked_custom_field_value).trim();
+              return defText === text;
+            });
+            
+            if (matchedLinked && matchedLinked.linked_custom_field_value_id) {
+              finalValueId =
+                typeof matchedLinked.linked_custom_field_value_id === 'string'
+                  ? matchedLinked.linked_custom_field_value_id.trim()
+                  : String(matchedLinked.linked_custom_field_value_id);
+            } else {
+              console.log('[buildCustomFieldsFromNode] Linked value not found by text:', {
+                text,
+                availableValues: defForLinked.linked_custom_field_values.map(v => ({
+                  id: v.linked_custom_field_value_id,
+                  text: v.linked_custom_field_value
+                }))
+              });
+            }
+          }
+
+          if (finalValueId) {
+            linkedFieldValuesByField[fieldIdKey].linked_custom_field_values.push({
+              linked_custom_field_value_id: finalValueId,
+            });
+          }
+        });
+      });
+
+      const linkedArray = Object.values(linkedFieldValuesByField).filter(
+        (lf) => lf.linked_custom_field_values.length > 0
+      );
+      if (linkedArray.length > 0) {
+        item.linked_custom_fields = linkedArray;
+      }
+    }
+
+    return [item];
+  };
+
+  const mergeCustomFieldsArrays = (baseArray, overrideArray) => {
+    if (!Array.isArray(baseArray) && !Array.isArray(overrideArray)) {
+      return [];
+    }
+    const base = Array.isArray(baseArray) ? baseArray : [];
+    const extra = Array.isArray(overrideArray) ? overrideArray : [];
+
+    if (extra.length === 0) {
+      return base;
+    }
+
+    const byId = {};
+    base.forEach((item) => {
+      if (item && item.custom_field_id) {
+        byId[item.custom_field_id] = item;
+      }
+    });
+
+    extra.forEach((item) => {
+      if (item && item.custom_field_id) {
+        // Значения из overrideArray имеют приоритет (в т.ч. linked_custom_fields)
+        byId[item.custom_field_id] = item;
+      }
+    });
+
+    return Object.values(byId);
+  };
+
+  const handleCreateFromNode = async (path, initialName, sourceNode) => {
     const trimmedName = (initialName || '').trim();
 
     // Если есть имя, создаём должность сразу, без открытия формы справа
     if (trimmedName) {
+      // Быстрое создание должности с немедленным назначением кастомных полей,
+      // соответствующих текущему пути в дереве.
       try {
+        console.log('[handleCreateFromNode] Creating position:', {
+          name: trimmedName,
+          path,
+          sourceNode,
+          hasLinkedFields: sourceNode?.linked_custom_fields?.length > 0
+        });
+
+        // Если есть sourceNode (узел дерева), используем его данные напрямую,
+        // так как они содержат точную информацию о прилинкованных значениях.
+        // Иначе используем path (для обратной совместимости).
+        let customFieldsArray = [];
+        
+        if (sourceNode && (sourceNode.custom_field_key || sourceNode.field_key)) {
+          // Строим custom_fields напрямую из узла - это самый точный способ
+          const fromNodeArray = buildCustomFieldsFromNode(sourceNode, customFields);
+          console.log('[handleCreateFromNode] fromNodeArray:', fromNodeArray);
+          
+          // Если из узла получили данные, используем их
+          if (fromNodeArray.length > 0) {
+            customFieldsArray = fromNodeArray;
+            
+            // Дополнительно добавляем поля из path, которых нет в узле
+            // (например, поля из родительских узлов)
+            const fromPathArray = convertCustomFieldsObjectToArray(path || {}, customFields);
+            console.log('[handleCreateFromNode] fromPathArray:', fromPathArray);
+            
+            // Объединяем: приоритет у данных из узла
+            customFieldsArray = mergeCustomFieldsArrays(fromPathArray, fromNodeArray);
+          } else {
+            // Если из узла ничего не получили, используем path
+            customFieldsArray = convertCustomFieldsObjectToArray(path || {}, customFields);
+          }
+        } else {
+          // Если нет sourceNode, используем только path
+          customFieldsArray = convertCustomFieldsObjectToArray(path || {}, customFields);
+        }
+        
+        console.log('[handleCreateFromNode] Final customFieldsArray:', customFieldsArray);
+
         const response = await axios.post(`${API_BASE}/positions`, {
           name: trimmedName,
           description: '',
-          custom_fields: path || {},
+          custom_fields: customFieldsArray,
           employee_full_name: '',
           employee_external_id: '',
           employee_profile_url: ''

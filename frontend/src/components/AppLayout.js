@@ -43,6 +43,7 @@ function AppLayout() {
   const [showCustomFields, setShowCustomFields] = useState(false);
   const [showPositionsList, setShowPositionsList] = useState(false);
   const [treeStructure, setTreeStructure] = useState(null);
+  const [deletedCustomField, setDeletedCustomField] = useState(null);
   const [savedNodePath, setSavedNodePath] = useState(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.SELECTED_NODE_PATH);
     return saved ? JSON.parse(saved) : null;
@@ -348,7 +349,12 @@ function AppLayout() {
     setTreeRefreshTrigger(prev => prev + 1);
   };
 
-  const handleCustomFieldsChanged = () => {
+  const handleCustomFieldsChanged = (event) => {
+    // Сохраняем информацию об удалённом поле (если есть), чтобы реактивно почистить дерево и должности
+    if (event && event.type === 'deleted' && event.field) {
+      setDeletedCustomField(event.field);
+    }
+    // На всякий случай всё равно перезагружаем должности с бэка
     setRefreshTrigger(prev => prev + 1);
   };
 
@@ -368,6 +374,7 @@ function AppLayout() {
               selectedNode={selectedNode}
               selectedPositionId={selectedPositionId}
               onTreeStructureChange={handleTreeStructureChange}
+              deletedCustomField={deletedCustomField}
             />
           }
           rightPanel={
@@ -384,6 +391,7 @@ function AppLayout() {
                 onDeleted={handlePositionDeleted}
                 initialPath={initialPath}
                 initialName={initialName}
+                deletedCustomField={deletedCustomField}
               />
             )
           }

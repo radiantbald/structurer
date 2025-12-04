@@ -111,12 +111,15 @@ function CustomFieldForm({ onClose, onSuccess }) {
   };
 
   const handleLinkFieldClick = () => {
-    // Исключаем текущее редактируемое поле и уже привязанные к текущему значению поля
-    const linkedFieldIdsForCurrentValue = new Set(
-      currentValueLinkedFields.map(linked => linked.linked_custom_field_id)
+    // Исключаем текущее редактируемое поле
+    // И поля, у которых уже есть значение (максимум одно значение на привязку)
+    const linkedFieldIdsWithValues = new Set(
+      currentValueLinkedFields
+        .filter(linked => linked.linked_custom_field_values && linked.linked_custom_field_values.length > 0)
+        .map(linked => linked.linked_custom_field_id)
     );
     const availableFields = existingFields.filter(
-      f => f.id !== editingFieldId && !linkedFieldIdsForCurrentValue.has(f.id)
+      f => f.id !== editingFieldId && !linkedFieldIdsWithValues.has(f.id)
     );
     if (availableFields.length === 0) {
       alert('Нет доступных кастомных полей для привязки');
@@ -137,14 +140,32 @@ function CustomFieldForm({ onClose, onSuccess }) {
   const handleSelectValueForLink = (valueObj) => {
     if (!selectedFieldForLink) return;
 
-    // Проверяем, не добавлено ли уже это поле
+    // Проверяем, существует ли уже привязка для этого поля
     const alreadyLinked = currentValueLinkedFields.find(
       linked => linked.linked_custom_field_id === selectedFieldForLink.id
     );
 
     if (alreadyLinked) {
-      // Теоретически не должны сюда попадать, т.к. поле уже скрыто из списка выбора.
-      // На всякий случай просто ничего не делаем.
+      // Если привязка существует, проверяем, есть ли уже значение
+      if (alreadyLinked.linked_custom_field_values && alreadyLinked.linked_custom_field_values.length > 0) {
+        // Уже есть значение, максимум одно - ничего не делаем
+        return;
+      }
+      // Привязка существует, но пустая - добавляем значение
+      setCurrentValueLinkedFields(prev =>
+        prev.map(linked => {
+          if (linked.linked_custom_field_id === selectedFieldForLink.id) {
+            return {
+              ...linked,
+              linked_custom_field_values: [{
+                linked_custom_field_value_id: valueObj.value_id,
+                linked_custom_field_value: valueObj.value
+              }]
+            };
+          }
+          return linked;
+        })
+      );
     } else {
       // Создаем новую привязку
       const newLinkedField = {
@@ -177,16 +198,14 @@ function CustomFieldForm({ onClose, onSuccess }) {
           const updatedValues = linked.linked_custom_field_values.filter(
             v => v.linked_custom_field_value_id !== valueId
           );
-          if (updatedValues.length === 0) {
-            return null; // Удаляем всю привязку, если не осталось значений
-          }
+          // Оставляем привязку с пустым массивом значений, если не осталось значений
           return {
             ...linked,
             linked_custom_field_values: updatedValues
           };
         }
         return linked;
-      }).filter(Boolean)
+      })
     );
   };
 
@@ -241,10 +260,13 @@ function CustomFieldForm({ onClose, onSuccess }) {
 
     try {
       let response;
+      let actionType = 'created';
       if (editingFieldId) {
         response = await axios.put(`${API_BASE}/custom-fields/${editingFieldId}`, payload);
+        actionType = 'updated';
       } else {
         response = await axios.post(`${API_BASE}/custom-fields`, payload);
+        actionType = 'created';
       }
       
       // Сброс формы
@@ -261,7 +283,10 @@ function CustomFieldForm({ onClose, onSuccess }) {
       await reloadExistingFields();
       
       if (onSuccess) {
-        onSuccess(response.data);
+        onSuccess({
+          type: actionType,
+          field: response.data,
+        });
       }
     } catch (err) {
       const errorMessage = err.response?.data?.error || 
@@ -327,11 +352,22 @@ function CustomFieldForm({ onClose, onSuccess }) {
 
     setDeletingFieldId(fieldId);
     try {
+      // Сохраняем удаляемое поле, чтобы передать его наверх
+      const deletedField = existingFields.find(f => f.id === fieldId) || null;
+
       await axios.delete(`${API_BASE}/custom-fields/${fieldId}`);
       await reloadExistingFields();
       
       if (editingFieldId === fieldId) {
         handleCancelEdit();
+      }
+
+      // Уведомляем родителя об удалении, чтобы он мог реактивно обновить дерево и должности
+      if (onSuccess && deletedField) {
+        onSuccess({
+          type: 'deleted',
+          field: deletedField,
+        });
       }
     } catch (err) {
       const errorMessage = err.response?.data?.error || 
@@ -346,12 +382,15 @@ function CustomFieldForm({ onClose, onSuccess }) {
 
   // Получаем доступные поля для привязки:
   // - исключаем текущее редактируемое поле;
-  // - исключаем поля, для которых уже выбрано одно значение в рамках текущего значения списка.
-  const linkedFieldIdsForCurrentValue = new Set(
-    currentValueLinkedFields.map(linked => linked.linked_custom_field_id)
+  // - исключаем только поля, у которых уже есть значение (максимум одно значение на привязку).
+  // Поля с пустыми привязками остаются доступными для добавления значения.
+  const linkedFieldIdsWithValues = new Set(
+    currentValueLinkedFields
+      .filter(linked => linked.linked_custom_field_values && linked.linked_custom_field_values.length > 0)
+      .map(linked => linked.linked_custom_field_id)
   );
   const availableFieldsForLink = existingFields.filter(
-    f => f.id !== editingFieldId && !linkedFieldIdsForCurrentValue.has(f.id)
+    f => f.id !== editingFieldId && !linkedFieldIdsWithValues.has(f.id)
   );
 
   // Получаем значения выбранного поля для привязки

@@ -17,6 +17,46 @@ const isFieldValueNode = (node) => {
   return node.type === 'field_value' || node.type === 'custom_field_value';
 };
 
+// Генерирует уникальный идентификатор узла на основе ключа, значения и всех прилинкованных значений
+// Это позволяет различать узлы с одинаковым основным значением, но разными прилинкованными полями
+const getNodeUniqueId = (node) => {
+  if (!isFieldValueNode(node)) {
+    return null;
+  }
+  
+  const nodeKV = getNodeKeyValue(node);
+  if (!nodeKV) {
+    return null;
+  }
+  
+  // Базовый идентификатор: ключ + значение
+  let uniqueId = `${nodeKV.key}:${nodeKV.value}`;
+  
+  // Добавляем все ID прилинкованных значений для уникальности
+  if (node.linked_custom_fields && Array.isArray(node.linked_custom_fields)) {
+    const linkedValueIds = [];
+    
+    node.linked_custom_fields.forEach((lf) => {
+      if (lf && Array.isArray(lf.linked_custom_field_values)) {
+        lf.linked_custom_field_values.forEach((lv) => {
+          if (lv && lv.linked_custom_field_value_id) {
+            // Используем ID прилинкованного значения для уникальности
+            linkedValueIds.push(lv.linked_custom_field_value_id);
+          }
+        });
+      }
+    });
+    
+    // Сортируем ID для стабильности сравнения
+    if (linkedValueIds.length > 0) {
+      linkedValueIds.sort();
+      uniqueId += '|' + linkedValueIds.join(',');
+    }
+  }
+  
+  return uniqueId;
+};
+
 // Формирование комбинированного названия узла на фронтенде
 // из custom_field_value и linked_custom_fields[].linked_custom_field_values[].linked_custom_field_value
 const buildCombinedFieldLabel = (node) => {
@@ -63,9 +103,9 @@ const findNodeInSubtree = (currentNode, targetNode) => {
   
   // Проверяем, соответствует ли текущий узел целевому
   if (isFieldValueNode(currentNode) && isFieldValueNode(targetNode)) {
-    const current = getNodeKeyValue(currentNode);
-    const target = getNodeKeyValue(targetNode);
-    if (current && target && current.key === target.key && current.value === target.value) {
+    const currentId = getNodeUniqueId(currentNode);
+    const targetId = getNodeUniqueId(targetNode);
+    if (currentId && targetId && currentId === targetId) {
       return true;
     }
   }
@@ -127,11 +167,9 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
       
       // Проверяем выбранный узел
       if (selectedNode) {
-        const nodeKV = getNodeKeyValue(node);
-        const selectedKV = getNodeKeyValue(selectedNode);
-        const isSelected = nodeKV && selectedKV && 
-                          nodeKV.key === selectedKV.key && 
-                          nodeKV.value === selectedKV.value;
+        const nodeId = getNodeUniqueId(node);
+        const selectedId = getNodeUniqueId(selectedNode);
+        const isSelected = nodeId && selectedId && nodeId === selectedId;
         const isOnPath = findNodeInSubtree(node, selectedNode);
         shouldExpand = isSelected || isOnPath;
       }
@@ -177,7 +215,9 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
 
   const handleCreateFromNode = (e) => {
     e.stopPropagation();
-    onCreateFromNode(path, null);
+    // Передаём не только path, но и сам узел, чтобы при быстром создании
+    // можно было точно восстановить нужные custom_fields (включая прилинкованные).
+    onCreateFromNode(path, null, node);
   };
 
   const handleQuickCreateFromNode = (e, newPath, nameOverride) => {
@@ -187,7 +227,10 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
     if (!trimmedName) {
       return;
     }
-    onCreateFromNode(newPath, trimmedName);
+    // Третьим параметром также передаём исходный узел дерева
+    // (field_value/custom_field_value), чтобы на уровне TreePanel
+    // можно было достроить структуру custom_fields без нестрогого парсинга текста.
+    onCreateFromNode(newPath, trimmedName, node);
     setNewPositionName('');
   };
 
@@ -262,7 +305,13 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
     const nodeKV = getNodeKeyValue(node);
     const newPath = { ...path };
     if (nodeKV) {
-      newPath[nodeKV.key] = nodeKV.value;
+      // Для быстрого создания должности важно передавать в path комбинированное значение:
+      // "Основное - Прилинк1 - Прилинк2".
+      // Именно такой формат ожидает convertCustomFieldsObjectToArray:
+      // он разбивает строку, берёт основное значение и список прилинкованных,
+      // и по ним находит нужные value_id как для основного, так и для linked‑полей.
+      const combinedLabel = buildCombinedFieldLabel(node);
+      newPath[nodeKV.key] = combinedLabel;
     }
 
     const hasChildren = node.children && node.children.length > 0;
@@ -279,10 +328,10 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
     const totalPositions = countAllPositions(node);
     
     // Проверяем, является ли текущий узел выбранным
-    const selectedKV = selectedNode ? getNodeKeyValue(selectedNode) : null;
-    const isSelected = selectedKV && nodeKV && 
-                      selectedKV.key === nodeKV.key && 
-                      selectedKV.value === nodeKV.value;
+    // Используем уникальный идентификатор, чтобы учитывать прилинкованные поля
+    const selectedId = selectedNode ? getNodeUniqueId(selectedNode) : null;
+    const currentNodeId = getNodeUniqueId(node);
+    const isSelected = selectedId && currentNodeId && selectedId === currentNodeId;
     
     // Комбинированное название формируем исключительно на фронтенде
     // из custom_field_value и linked_custom_field_value.
