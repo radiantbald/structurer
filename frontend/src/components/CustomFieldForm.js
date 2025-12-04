@@ -111,8 +111,13 @@ function CustomFieldForm({ onClose, onSuccess }) {
   };
 
   const handleLinkFieldClick = () => {
-    // Исключаем текущее редактируемое поле из списка доступных для привязки
-    const availableFields = existingFields.filter(f => f.id !== editingFieldId);
+    // Исключаем текущее редактируемое поле и уже привязанные к текущему значению поля
+    const linkedFieldIdsForCurrentValue = new Set(
+      currentValueLinkedFields.map(linked => linked.linked_custom_field_id)
+    );
+    const availableFields = existingFields.filter(
+      f => f.id !== editingFieldId && !linkedFieldIdsForCurrentValue.has(f.id)
+    );
     if (availableFields.length === 0) {
       alert('Нет доступных кастомных полей для привязки');
       return;
@@ -138,29 +143,8 @@ function CustomFieldForm({ onClose, onSuccess }) {
     );
 
     if (alreadyLinked) {
-      // Добавляем значение к существующей привязке
-      const updatedLinkedFields = currentValueLinkedFields.map(linked => {
-        if (linked.linked_custom_field_id === selectedFieldForLink.id) {
-          // Проверяем, не добавлено ли уже это значение
-          const valueExists = linked.linked_custom_field_values.find(
-            v => v.linked_custom_field_value_id === valueObj.value_id
-          );
-          if (!valueExists) {
-            return {
-              ...linked,
-              linked_custom_field_values: [
-                ...linked.linked_custom_field_values,
-                {
-                  linked_custom_field_value_id: valueObj.value_id,
-                  linked_custom_field_value: valueObj.value
-                }
-              ]
-            };
-          }
-        }
-        return linked;
-      });
-      setCurrentValueLinkedFields(updatedLinkedFields);
+      // Теоретически не должны сюда попадать, т.к. поле уже скрыто из списка выбора.
+      // На всякий случай просто ничего не делаем.
     } else {
       // Создаем новую привязку
       const newLinkedField = {
@@ -360,8 +344,15 @@ function CustomFieldForm({ onClose, onSuccess }) {
     }
   };
 
-  // Получаем доступные поля для привязки (исключаем текущее редактируемое)
-  const availableFieldsForLink = existingFields.filter(f => f.id !== editingFieldId);
+  // Получаем доступные поля для привязки:
+  // - исключаем текущее редактируемое поле;
+  // - исключаем поля, для которых уже выбрано одно значение в рамках текущего значения списка.
+  const linkedFieldIdsForCurrentValue = new Set(
+    currentValueLinkedFields.map(linked => linked.linked_custom_field_id)
+  );
+  const availableFieldsForLink = existingFields.filter(
+    f => f.id !== editingFieldId && !linkedFieldIdsForCurrentValue.has(f.id)
+  );
 
   // Получаем значения выбранного поля для привязки
   const selectedFieldValues = selectedFieldForLink?.allowed_values || [];

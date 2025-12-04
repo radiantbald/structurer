@@ -10,6 +10,9 @@ import (
 )
 
 func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
+	// Local handler to reuse helper logic that builds custom_fields with linked_custom_fields
+	h := &Handler{db: db}
+
 	structure := TreeStructure{
 		TreeID: tree.ID.String(),
 		Name:   tree.Name,
@@ -110,53 +113,62 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 		//  - custom_fields_values_ids хранит ID выбранных значений (value_id).
 		// Для построения иерархии по значениям нам нужны ИМЕННО value_id,
 		// поэтому здесь используем custom_fields_values_ids.
-		`SELECT id, name, custom_fields_values_ids, employee_full_name FROM positions ORDER BY id`,
+		// Дополнительно читаем custom_fields_ids, чтобы корректно восстановить структуру
+		// с учётом linked_custom_fields так же, как это делает ручка positions/{id}.
+		`SELECT id, name, custom_fields_ids, custom_fields_values_ids, employee_full_name FROM positions ORDER BY id`,
 	)
 	defer rows.Close()
 
 	var positions []struct {
-		ID             string
-		Name           string
-		CustomFields   map[string]string
-		EmployeeFullName *string
+		ID                   string
+		Name                 string
+		CustomFields         map[string]string
+		CustomFieldDetails   map[string]PositionCustomFieldValue
+		EmployeeFullName     *string
 	}
 
 	for rows.Next() {
 		var p struct {
-			ID             string
-			Name           string
-			CustomFields   map[string]string
-			EmployeeFullName *string
+			ID                 string
+			Name               string
+			CustomFields       map[string]string
+			CustomFieldDetails map[string]PositionCustomFieldValue
+			EmployeeFullName   *string
 		}
+		var customFieldsIDsJSON []byte
 		var customFieldsValuesIDsJSON []byte
 		var employeeFullName sql.NullString
-		if err := rows.Scan(&p.ID, &p.Name, &customFieldsValuesIDsJSON, &employeeFullName); err == nil {
+		if err := rows.Scan(&p.ID, &p.Name, &customFieldsIDsJSON, &customFieldsValuesIDsJSON, &employeeFullName); err == nil {
 			p.CustomFields = make(map[string]string)
+			p.CustomFieldDetails = make(map[string]PositionCustomFieldValue)
+
+			// Восстанавливаем те же структуры custom_fields, что и в ручке positions/{id},
+			// чтобы структура дерева учитывала все linked_custom_fields и их значения.
+			var cfIDs UUIDArray
+			var cfValueIDs UUIDArray
+			if customFieldsIDsJSON != nil {
+				_ = json.Unmarshal(customFieldsIDsJSON, &cfIDs)
+			}
 			if customFieldsValuesIDsJSON != nil {
-				// Parse array of UUID strings
-				var ids []string
-				if err := json.Unmarshal(customFieldsValuesIDsJSON, &ids); err == nil {
-					// Для каждого value_id определяем, к какому полю он относится,
-					// и берём человекочитаемое значение из custom_fields_values.
-					for _, idStr := range ids {
-						if valueID, err := uuid.Parse(idStr); err == nil {
-							// Find which field this value belongs to
-							if fieldID, exists := valueToFieldMap[valueID]; exists {
-								// Get field key
-								if fieldInfo, exists := fieldInfoMap[fieldID]; exists {
-									// Get value text
-									if valueText, exists := valueInfoMap[valueID]; exists {
-										// Store first value for each field (take first occurrence)
-										if _, alreadySet := p.CustomFields[fieldInfo.Key]; !alreadySet {
-											p.CustomFields[fieldInfo.Key] = valueText
-										}
-									}
-								}
-							}
+				_ = json.Unmarshal(customFieldsValuesIDsJSON, &cfValueIDs)
+			}
+
+			if len(cfIDs) > 0 && len(cfValueIDs) > 0 {
+				if customFieldsArray, err := h.buildCustomFieldsArrayFromIDs(&cfIDs, &cfValueIDs); err == nil {
+					for _, cf := range customFieldsArray {
+						// Сохраняем основное значение поля по его key —
+						// именно по нему строится путь в дереве.
+						if _, exists := p.CustomFields[cf.CustomFieldKey]; !exists {
+							p.CustomFields[cf.CustomFieldKey] = cf.CustomFieldValue
+						}
+						// И отдельную детальную структуру, включающую linked_custom_fields.
+						if _, exists := p.CustomFieldDetails[cf.CustomFieldKey]; !exists {
+							p.CustomFieldDetails[cf.CustomFieldKey] = cf
 						}
 					}
 				}
 			}
+
 			if employeeFullName.Valid && employeeFullName.String != "" {
 				p.EmployeeFullName = &employeeFullName.String
 			}
@@ -180,10 +192,11 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 	// Filter positions passed into tree‑builder so, что в саму иерархию попадают
 	// только должности, у которых есть хотя бы одно значимое значение уровня.
 	var structuredPositions []struct {
-		ID             string
-		Name           string
-		CustomFields   map[string]string
-		EmployeeFullName *string
+		ID                 string
+		Name               string
+		CustomFields       map[string]string
+		CustomFieldDetails map[string]PositionCustomFieldValue
+		EmployeeFullName   *string
 	}
 	for _, pos := range positions {
 		if structuredPositionIDs[pos.ID] {
@@ -205,10 +218,11 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 
 	// Collect positions that don't participate in the tree at all (no values for any tree level keys)
 	unstructuredPositions := make([]struct {
-		ID             string
-		Name           string
-		CustomFields   map[string]string
-		EmployeeFullName *string
+		ID                 string
+		Name               string
+		CustomFields       map[string]string
+		CustomFieldDetails map[string]PositionCustomFieldValue
+		EmployeeFullName   *string
 	}, 0)
 
 	for _, pos := range positions {
@@ -461,10 +475,11 @@ func buildLinkedCustomFields(allowedValue *AllowedValue) []LinkedCustomField {
 }
 
 func buildTreeLevel(positions []struct {
-	ID             string
-	Name           string
-	CustomFields   map[string]string
-	EmployeeFullName *string
+	ID                 string
+	Name               string
+	CustomFields       map[string]string
+	CustomFieldDetails map[string]PositionCustomFieldValue
+	EmployeeFullName   *string
 }, levels []TreeLevel, levelIndex int, path map[string]string, fieldDefsByKey map[string]CustomFieldDefinition, treeLevelFieldKeys map[string]bool) []TreeNode {
 	if levelIndex >= len(levels) {
 		// Leaf level - return positions
@@ -494,10 +509,11 @@ func buildTreeLevel(positions []struct {
 
 	valueSet := make(map[string]bool)
 	var positionsWithoutValue []struct {
-		ID             string
-		Name           string
-		CustomFields   map[string]string
-		EmployeeFullName *string
+		ID                 string
+		Name               string
+		CustomFields       map[string]string
+		CustomFieldDetails map[string]PositionCustomFieldValue
+		EmployeeFullName   *string
 	}
 	for _, pos := range positions {
 		if !matchesPath(pos.CustomFields, path) {
@@ -585,16 +601,18 @@ func buildTreeLevel(positions []struct {
 		if hasLinkedFields {
 			// Group positions by linked field values
 			linkedValueGroups := make(map[string][]struct {
-				ID             string
-				Name           string
-				CustomFields   map[string]string
-				EmployeeFullName *string
+				ID                 string
+				Name               string
+				CustomFields       map[string]string
+				CustomFieldDetails map[string]PositionCustomFieldValue
+				EmployeeFullName   *string
 			})
 			positionsWithoutLinkedValue := []struct {
-				ID             string
-				Name           string
-				CustomFields   map[string]string
-				EmployeeFullName *string
+				ID                 string
+				Name               string
+				CustomFields       map[string]string
+				CustomFieldDetails map[string]PositionCustomFieldValue
+				EmployeeFullName   *string
 			}{}
 
 			// Get main value name for display
@@ -696,59 +714,32 @@ func buildTreeLevel(positions []struct {
 
 				children := buildTreeLevel(groupPositions, levels, levelIndex+1, newPath, fieldDefsByKey, treeLevelFieldKeys)
 
-				// Build linked custom fields based on фактических значений должностей в этой группе.
+				// Build linked custom fields и основное значение на основе той же логики,
+				// что и в ручке positions/{id}: берём структуру из CustomFieldDetails.
 				var linkedFields []LinkedCustomField
-				if matchedAllowedValue != nil && len(matchedAllowedValue.LinkedCustomFields) > 0 && len(groupPositions) > 0 {
-					// Берём первую должность из группы как репрезентативную:
-					// по построению группы у всех одинаковая комбинация прилинкованных значений.
-					repPos := groupPositions[0]
-
-					for _, lf := range matchedAllowedValue.LinkedCustomFields {
-						linkedFieldKey := lf.LinkedCustomFieldKey
-						rawVal, ok := repPos.CustomFields[linkedFieldKey]
-						if !ok || rawVal == "" {
-							continue
-						}
-
-						valueText := rawVal
-						valueID := uuid.Nil
-
-						// Пытаемся найти value_id и нормализованный текст по определению самого
-						// прилинкованного поля (а не по основному значению).
-						if linkedFieldDef, ok := fieldDefsByKey[linkedFieldKey]; ok && linkedFieldDef.AllowedValues != nil {
-							for _, av := range *linkedFieldDef.AllowedValues {
-								if rawVal == av.ValueID.String() || rawVal == av.Value {
-									valueID = av.ValueID
-									valueText = av.Value
-									break
-								}
-							}
-						}
-
-						if valueText == "" {
-							continue
-						}
-
-						linkedFields = append(linkedFields, LinkedCustomField{
-							LinkedCustomFieldID:    lf.LinkedCustomFieldID,
-							LinkedCustomFieldKey:   lf.LinkedCustomFieldKey,
-							LinkedCustomFieldLabel: lf.LinkedCustomFieldLabel,
-							LinkedCustomFieldValues: []LinkedCustomFieldValue{
-								{
-									LinkedCustomFieldValueID:   valueID,
-									LinkedCustomFieldValue:     valueText,
-								},
-							},
-						})
-					}
-				}
-
 				customFieldID := fieldDef.ID.String()
 				customFieldKey := fieldKey
-				// В custom_field_value храним только "чистое" значение основного поля.
-				// Комбинированная строка для отображения (основное + прилинкованные)
-				// теперь строится на фронтенде по данным в linked_custom_fields.
 				originalValue := mainValueName
+
+				if len(groupPositions) > 0 {
+					repPos := groupPositions[0]
+					if cf, ok := repPos.CustomFieldDetails[fieldKey]; ok {
+						if len(cf.LinkedCustomFields) > 0 {
+							linkedFields = cf.LinkedCustomFields
+						}
+						// Перестраховка: если текст основного значения отличается от mainValueName,
+						// используем тот, что вернула buildCustomFieldsArrayFromIDs.
+						if cf.CustomFieldValue != "" {
+							originalValue = cf.CustomFieldValue
+						}
+						if cf.CustomFieldID != "" {
+							customFieldID = cf.CustomFieldID
+						}
+						if cf.CustomFieldKey != "" {
+							customFieldKey = cf.CustomFieldKey
+						}
+					}
+				}
 
 				nodes = append(nodes, TreeNode{
 					Type:               "custom_field_value",
@@ -792,10 +783,11 @@ func buildTreeLevel(positions []struct {
 			// No linked fields - create node as before
 			// Filter positions that match this value
 			var matchingPositions []struct {
-				ID             string
-				Name           string
-				CustomFields   map[string]string
-				EmployeeFullName *string
+				ID                 string
+				Name               string
+				CustomFields       map[string]string
+				CustomFieldDetails map[string]PositionCustomFieldValue
+				EmployeeFullName   *string
 			}
 			for _, pos := range positions {
 				if !matchesPath(pos.CustomFields, path) {
