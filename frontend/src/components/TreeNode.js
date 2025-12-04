@@ -17,6 +17,46 @@ const isFieldValueNode = (node) => {
   return node.type === 'field_value' || node.type === 'custom_field_value';
 };
 
+// Формирование комбинированного названия узла на фронтенде
+// из custom_field_value и linked_custom_fields[].linked_custom_field_values[].linked_custom_field_value
+const buildCombinedFieldLabel = (node) => {
+  const nodeKV = getNodeKeyValue(node);
+  const baseValue =
+    (nodeKV && nodeKV.value) ||
+    node.custom_field_value ||
+    node.field_value || // поддержка старых данных, если вдруг ещё придут
+    '';
+
+  // Нет прилинкованных значений — возвращаем базовое
+  if (!node.linked_custom_fields || !Array.isArray(node.linked_custom_fields)) {
+    return baseValue;
+  }
+
+  const linkedNames = [];
+
+  node.linked_custom_fields.forEach((lf) => {
+    if (!lf || !Array.isArray(lf.linked_custom_field_values)) {
+      return;
+    }
+    lf.linked_custom_field_values.forEach((lv) => {
+      if (
+        lv &&
+        typeof lv.linked_custom_field_value === 'string' &&
+        lv.linked_custom_field_value.trim()
+      ) {
+        linkedNames.push(lv.linked_custom_field_value.trim());
+      }
+    });
+  });
+
+  if (linkedNames.length === 0) {
+    return baseValue;
+  }
+
+  // Комбинированное название: "Основное - Прилинк1 - Прилинк2"
+  return [baseValue, ...linkedNames].join(' - ');
+};
+
 // Вспомогательная функция для рекурсивного поиска узла в поддереве (вынесена наружу для стабильности)
 const findNodeInSubtree = (currentNode, targetNode) => {
   if (!currentNode || !targetNode) return false;
@@ -244,37 +284,9 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
                       selectedKV.key === nodeKV.key && 
                       selectedKV.value === nodeKV.value;
     
-    // Формируем комбинированное название из custom_field_value и linked_custom_fields
-    let displayValue = node.custom_field_value || nodeKV?.value || '';
-    
-    // Добавляем прилинкованные значения из linked_custom_fields
-    if (node.linked_custom_fields && Array.isArray(node.linked_custom_fields)) {
-      const linkedValues = [];
-      
-      // Сортируем linked_custom_fields по порядку (если есть level_order) или по ключу
-      const sortedLinkedFields = [...node.linked_custom_fields].sort((a, b) => {
-        // Можно добавить сортировку по порядку, если он будет передан
-        return (a.linked_custom_field_key || '').localeCompare(b.linked_custom_field_key || '');
-      });
-      
-      for (const linkedField of sortedLinkedFields) {
-        if (linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
-          for (const linkedValue of linkedField.linked_custom_field_values) {
-            if (linkedValue.linked_custom_field_value && typeof linkedValue.linked_custom_field_value === 'string') {
-              const trimmedValue = linkedValue.linked_custom_field_value.trim();
-              if (trimmedValue && !linkedValues.includes(trimmedValue)) {
-                linkedValues.push(trimmedValue);
-              }
-            }
-          }
-        }
-      }
-      
-      // Объединяем основное значение с прилинкованными через " - "
-      if (linkedValues.length > 0) {
-        displayValue = displayValue + ' - ' + linkedValues.join(' - ');
-      }
-    }
+    // Комбинированное название формируем исключительно на фронтенде
+    // из custom_field_value и linked_custom_field_value.
+    const displayValue = buildCombinedFieldLabel(node);
 
     return (
       <div className={`tree-node tree-node-field tree-node-level-${level}`}>

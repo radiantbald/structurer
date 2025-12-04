@@ -180,6 +180,10 @@ type TreeNode struct {
 	Type            string     `json:"type"` // "root", "custom_field_value", "position"
 	LevelOrder      *int       `json:"level_order,omitempty"`
 	FieldKey        *string    `json:"field_key,omitempty"` // Deprecated: use CustomFieldKey
+	// FieldValue is fully removed from API; kept only to avoid breaking old code references.
+	// It is not serialized to JSON anymore; combined labels are now built on the frontend
+	// from CustomFieldValue and LinkedCustomFields.
+	FieldValue      *string    `json:"-"` // Deprecated and hidden from JSON
 	CustomFieldID   *string    `json:"custom_field_id,omitempty"`
 	CustomFieldKey  *string    `json:"custom_field_key,omitempty"`
 	CustomFieldValue *string   `json:"custom_field_value,omitempty"`

@@ -66,8 +66,8 @@ function buildTreeStructureLocally(positions, treeDefinition) {
     const unstructuredGroup = {
       type: 'field_value',
       level_order: null,
-      field_key: null,
-      field_value: label,
+      custom_field_key: null,
+      custom_field_value: label,
       children: unstructuredNodes
     };
 
@@ -148,11 +148,13 @@ function buildTreeLevel(positions, levels, levelIndex, path) {
     const newPath = { ...path, [fieldKey]: val };
     const children = buildTreeLevel(positions, levels, levelIndex + 1, newPath);
 
+    // Локальный билдер теперь тоже использует custom_field_key/custom_field_value,
+    // чтобы формат совпадал с ответом бэкенда (ручка structure).
     nodes.push({
       type: 'field_value',
       level_order: order,
-      field_key: fieldKey,
-      field_value: val,
+      custom_field_key: fieldKey,
+      custom_field_value: val,
       children: children
     });
   }
@@ -181,8 +183,8 @@ function buildTreeLevel(positions, levels, levelIndex, path) {
 
   // Сортируем папки по названию
   fieldNodes.sort((a, b) => {
-    const va = a.field_value || '';
-    const vb = b.field_value || '';
+    const va = a.custom_field_value || a.field_value || '';
+    const vb = b.custom_field_value || b.field_value || '';
     return va.localeCompare(vb);
   });
 

@@ -575,7 +575,7 @@ func buildTreeLevel(positions []struct {
 		}
 
 		// If this value has linked fields, create separate folders for each linked value
-		// Разными значениями также считаются значения одного кастомного поля, 
+		// Разными значениями также считаются значения одного кастомного поля,
 		// к которому прилинкованы разные значения другого кастомного поля
 		hasLinkedFields := false
 		if matchedAllowedValue != nil && len(matchedAllowedValue.LinkedCustomFields) > 0 {
@@ -619,7 +619,7 @@ func buildTreeLevel(positions []struct {
 				}
 
 				// Collect all linked field values
-				// Название прилинкованного кастомного поля брать из объекта "custom_field_value" 
+				// Название прилинкованного кастомного поля брать из объекта "custom_field_value"
 				// "linked_custom_field_value", находящегося иерархично в объекте "linked_custom_fields"
 				type linkedValueInfo struct {
 					fieldKey   string
@@ -665,9 +665,10 @@ func buildTreeLevel(positions []struct {
 						return linkedValues[i].order < linkedValues[j].order
 					})
 
-					// Строка с основной и прилинкованными величинами, используется только
-					// как display‑label, а не как "истинное" значение поля.
-					// Основное значение сохраняем отдельно и не модифицируем.
+					// Строка с основной и прилинкованными величинами используется только
+					// для внутренней группировки веток на бэкенде. Отдельное поле field_value
+					// больше не выводится наружу — комбинированное название узла полностью
+					// формируется на фронтенде из custom_field_value и linked_custom_field_value.
 					combinedName := mainValueName
 					for _, lv := range linkedValues {
 						if lv.valueName == "" {
@@ -744,6 +745,9 @@ func buildTreeLevel(positions []struct {
 
 				customFieldID := fieldDef.ID.String()
 				customFieldKey := fieldKey
+				// В custom_field_value храним только "чистое" значение основного поля.
+				// Комбинированная строка для отображения (основное + прилинкованные)
+				// теперь строится на фронтенде по данным в linked_custom_fields.
 				originalValue := mainValueName
 
 				nodes = append(nodes, TreeNode{
