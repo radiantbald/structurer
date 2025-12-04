@@ -44,35 +44,12 @@ function buildTreeStructureLocally(positions, treeDefinition) {
     }
   }
 
-  // Фильтруем структурированные должности
-  const structuredPositions = normalizedPositions.filter(pos => structuredPositionIDs.has(pos.id));
+  // Строим структурированную часть дерева из всех должностей
+  // (должности без значений для уровней будут добавлены в соответствующие узлы в buildTreeLevel)
+  const structuredChildren = buildTreeLevel(normalizedPositions, treeDefinition.levels, 0, {});
 
-  // Строим структурированную часть дерева
-  const structuredChildren = buildTreeLevel(structuredPositions, treeDefinition.levels, 0, {});
-
-  // Собираем должности вне структуры
-  const unstructuredPositions = normalizedPositions.filter(pos => !structuredPositionIDs.has(pos.id));
-
-  if (unstructuredPositions.length > 0) {
-    const unstructuredNodes = unstructuredPositions.map(pos => ({
-      type: 'position',
-      position_id: pos.id,
-      position_name: pos.name,
-      employee_full_name: pos.employee_full_name,
-      children: []
-    }));
-
-    const label = 'Вне структуры';
-    const unstructuredGroup = {
-      type: 'field_value',
-      level_order: null,
-      custom_field_key: null,
-      custom_field_value: label,
-      children: unstructuredNodes
-    };
-
-    structuredChildren.push(unstructuredGroup);
-  }
+  // Должности без значений для уровней уже обрабатываются в buildTreeLevel,
+  // поэтому не создаем отдельную папку "Вне структуры"
 
   // Защитный fallback: если дерево не смогло распределить должности, показываем все плоским списком
   if (structuredChildren.length === 0 && normalizedPositions.length > 0) {

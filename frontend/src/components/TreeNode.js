@@ -247,21 +247,30 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
   if (node.type === 'root') {
     return (
       <div className="tree-node-root">
-            {node.children && node.children.map((child, index) => (
-              <TreeNode
-                key={index}
-                node={child}
-                level={level + 1}
-                path={path}
-                onPositionSelect={onPositionSelect}
-                onCreateFromNode={onCreateFromNode}
-                onNodeSelect={onNodeSelect}
-                selectedNode={selectedNode}
-                selectedPositionId={selectedPositionId}
-                searchQuery={searchQuery}
-                subtreeContainsMatchingPositions={subtreeContainsMatchingPositions}
-              />
-            ))}
+            {node.children && node.children
+              .filter(child => {
+                // Если нет поискового запроса, показываем все узлы
+                if (!searchQuery || !searchQuery.trim()) {
+                  return true;
+                }
+                // Если есть поиск, показываем только узлы, которые содержат соответствующие позиции
+                return subtreeContainsMatchingPositions ? subtreeContainsMatchingPositions(child, searchQuery) : true;
+              })
+              .map((child, index) => (
+                <TreeNode
+                  key={index}
+                  node={child}
+                  level={level + 1}
+                  path={path}
+                  onPositionSelect={onPositionSelect}
+                  onCreateFromNode={onCreateFromNode}
+                  onNodeSelect={onNodeSelect}
+                  selectedNode={selectedNode}
+                  selectedPositionId={selectedPositionId}
+                  searchQuery={searchQuery}
+                  subtreeContainsMatchingPositions={subtreeContainsMatchingPositions}
+                />
+              ))}
       </div>
     );
   }
@@ -302,6 +311,14 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
   }
 
   if (isFieldValueNode(node)) {
+    // Если есть поисковый запрос, проверяем, содержит ли узел соответствующие позиции
+    // Если нет - скрываем узел
+    if (searchQuery && searchQuery.trim() && subtreeContainsMatchingPositions) {
+      if (!subtreeContainsMatchingPositions(node, searchQuery)) {
+        return null; // Скрываем узел, если он не содержит соответствующих позиций
+      }
+    }
+
     const nodeKV = getNodeKeyValue(node);
     const newPath = { ...path };
     if (nodeKV) {
@@ -367,22 +384,32 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
         </div>
         {expanded && (
           <div className="tree-node-children">
-            {/* Сначала показываем должности */}
-            {positionChildren.map((child, index) => (
-              <TreeNode
-                key={`position-${index}`}
-                node={child}
-                level={level + 1}
-                path={newPath}
-                onPositionSelect={onPositionSelect}
-                onCreateFromNode={onCreateFromNode}
-                onNodeSelect={onNodeSelect}
-                selectedNode={selectedNode}
-                selectedPositionId={selectedPositionId}
-                searchQuery={searchQuery}
-                subtreeContainsMatchingPositions={subtreeContainsMatchingPositions}
-              />
-            ))}
+            {/* Сначала показываем должности (фильтруем по поиску, если есть) */}
+            {positionChildren
+              .filter(child => {
+                // Если нет поискового запроса, показываем все позиции
+                if (!searchQuery || !searchQuery.trim()) {
+                  return true;
+                }
+                // Если есть поиск, показываем только соответствующие позиции
+                // Используем subtreeContainsMatchingPositions для проверки позиции
+                return subtreeContainsMatchingPositions ? subtreeContainsMatchingPositions(child, searchQuery) : true;
+              })
+              .map((child, index) => (
+                <TreeNode
+                  key={`position-${index}`}
+                  node={child}
+                  level={level + 1}
+                  path={newPath}
+                  onPositionSelect={onPositionSelect}
+                  onCreateFromNode={onCreateFromNode}
+                  onNodeSelect={onNodeSelect}
+                  selectedNode={selectedNode}
+                  selectedPositionId={selectedPositionId}
+                  searchQuery={searchQuery}
+                  subtreeContainsMatchingPositions={subtreeContainsMatchingPositions}
+                />
+              ))}
             {/* Затем действия (форма быстрого создания) */}
             <div
               className="tree-node-quick-create"
@@ -408,21 +435,31 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
               </button>
             </div>
             {/* В конце показываем дочерние узлы (custom_field_value/field_value) */}
-            {fieldValueChildren.map((child, index) => (
-              <TreeNode
-                key={`field-${index}`}
-                node={child}
-                level={level + 1}
-                path={newPath}
-                onPositionSelect={onPositionSelect}
-                onCreateFromNode={onCreateFromNode}
-                onNodeSelect={onNodeSelect}
-                selectedNode={selectedNode}
-                selectedPositionId={selectedPositionId}
-                searchQuery={searchQuery}
-                subtreeContainsMatchingPositions={subtreeContainsMatchingPositions}
-              />
-            ))}
+            {/* Фильтруем дочерние узлы по поиску: показываем только те, которые содержат соответствующие позиции */}
+            {fieldValueChildren
+              .filter(child => {
+                // Если нет поискового запроса, показываем все узлы
+                if (!searchQuery || !searchQuery.trim()) {
+                  return true;
+                }
+                // Если есть поиск, показываем только узлы, которые содержат соответствующие позиции
+                return subtreeContainsMatchingPositions ? subtreeContainsMatchingPositions(child, searchQuery) : true;
+              })
+              .map((child, index) => (
+                <TreeNode
+                  key={`field-${index}`}
+                  node={child}
+                  level={level + 1}
+                  path={newPath}
+                  onPositionSelect={onPositionSelect}
+                  onCreateFromNode={onCreateFromNode}
+                  onNodeSelect={onNodeSelect}
+                  selectedNode={selectedNode}
+                  selectedPositionId={selectedPositionId}
+                  searchQuery={searchQuery}
+                  subtreeContainsMatchingPositions={subtreeContainsMatchingPositions}
+                />
+              ))}
           </div>
         )}
       </div>

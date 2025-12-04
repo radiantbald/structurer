@@ -13,8 +13,8 @@ type Position struct {
 	ID                      int64           `json:"id" db:"id"`
 	Name                    string          `json:"name" db:"name"`
 	Description             *string         `json:"description" db:"description"`
-	CustomFieldsIDs         *UUIDArray      `json:"custom_fields" db:"custom_fields_ids"` // Stored as array of UUIDs in DB, returned as custom_fields in JSON
-	CustomFieldsValuesIDs   *UUIDArray      `json:"-" db:"custom_fields_values_ids"` // Stored as array of UUIDs in DB
+	CustomFieldsIDs         *UUIDArray      `json:"custom_fields" db:"custom_fields_ids"`                     // Stored as array of UUIDs in DB, returned as custom_fields in JSON
+	CustomFieldsValuesIDs   *UUIDArray      `json:"custom_fields_values_ids,omitempty" db:"custom_fields_values_ids"` // Stored as array of UUIDs in DB, exposed for search/UX
 	EmployeeFullName        *string         `json:"employee_full_name" db:"employee_full_name"`
 	EmployeeExternalID      *string         `json:"employee_external_id" db:"employee_external_id"`
 	EmployeeProfileURL      *string         `json:"employee_profile_url" db:"employee_profile_url"`

@@ -30,6 +30,7 @@ function TreePanel({
     return saved !== null ? saved : null;
   });
   const [treeStructure, setTreeStructure] = useState(null);
+  const [originalTreeStructure, setOriginalTreeStructure] = useState(null); // Сохраняем исходную структуру дерева
   const [positions, setPositions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadingTree, setLoadingTree] = useState(false);
@@ -74,9 +75,15 @@ function TreePanel({
         localStorage.removeItem(STORAGE_KEY_SELECTED_TREE_ID);
         return;
       }
-      // Если есть поисковый запрос, перестраиваем дерево локально из отфильтрованных позиций
+      // Если есть поисковый запрос, используем исходную структуру дерева (не перестраиваем)
       if (searchQuery && searchQuery.trim()) {
-        rebuildTreeStructureLocally(selectedTreeId);
+        // Если исходная структура уже загружена, используем её
+        if (originalTreeStructure) {
+          setTreeStructure(originalTreeStructure);
+        } else {
+          // Иначе загружаем структуру с сервера и сохраняем как исходную
+          loadTreeStructure(selectedTreeId);
+        }
       } else {
         // Загружаем структуру дерева с сервера
         loadTreeStructure(selectedTreeId);
@@ -96,10 +103,13 @@ function TreePanel({
       return;
     }
     
-    // Если есть поисковый запрос, перестраиваем дерево локально из отфильтрованных позиций
+    // Если есть поисковый запрос, используем исходную структуру дерева (не перестраиваем)
     if (searchQuery && searchQuery.trim()) {
       if (selectedTreeId && selectedTreeId !== '') {
-        rebuildTreeStructureLocally(selectedTreeId);
+        // Используем исходную структуру, если она есть
+        if (originalTreeStructure) {
+          setTreeStructure(originalTreeStructure);
+        }
       } else {
         rebuildFlatStructureLocally();
       }
@@ -120,10 +130,13 @@ function TreePanel({
     if (allPositionsRef.current.length > 0) {
       applySearchFilter(allPositionsRef.current, searchQuery);
       
-      // Если есть поисковый запрос, перестраиваем дерево локально из отфильтрованных позиций
+      // Если есть поисковый запрос, используем исходную структуру дерева (не перестраиваем)
       if (searchQuery && searchQuery.trim()) {
         if (selectedTreeId && selectedTreeId !== '') {
-          rebuildTreeStructureLocally(selectedTreeId);
+          // Используем исходную структуру, если она есть
+          if (originalTreeStructure) {
+            setTreeStructure(originalTreeStructure);
+          }
         } else {
           rebuildFlatStructureLocally();
         }
@@ -298,30 +311,128 @@ function TreePanel({
     if (!term) return true;
 
     const termLower = term.toLowerCase();
-    
+
     // Поиск по имени
     if (position.name && position.name.toLowerCase().includes(termLower)) {
       return true;
     }
-    
+
     // Поиск по описанию
     if (position.description && position.description.toLowerCase().includes(termLower)) {
       return true;
     }
-    
+
     // Поиск по имени сотрудника
     if (position.employee_full_name && position.employee_full_name.toLowerCase().includes(termLower)) {
       return true;
     }
-    
-    // Поиск по кастомным полям
-    if (position.custom_fields && typeof position.custom_fields === 'object') {
-      const customFieldsStr = JSON.stringify(position.custom_fields).toLowerCase();
+
+    // Поиск по кастомным полям (учитываем разные форматы хранения и значения)
+    const customFieldTexts = [];
+
+    // 1) Старый / альтернативный формат: position.custom_fields как объект или массив
+    if (position.custom_fields) {
+      if (Array.isArray(position.custom_fields)) {
+        // Возможный новый формат: массив объектов с custom_field_label/custom_field_value
+        position.custom_fields.forEach((cf) => {
+          if (!cf) return;
+
+          if (cf.custom_field_label) {
+            customFieldTexts.push(String(cf.custom_field_label));
+          }
+          if (cf.custom_field_value) {
+            customFieldTexts.push(String(cf.custom_field_value));
+          }
+
+          if (Array.isArray(cf.linked_custom_fields)) {
+            cf.linked_custom_fields.forEach((lf) => {
+              if (!lf) return;
+              if (lf.linked_custom_field_label) {
+                customFieldTexts.push(String(lf.linked_custom_field_label));
+              }
+              if (Array.isArray(lf.linked_custom_field_values)) {
+                lf.linked_custom_field_values.forEach((lv) => {
+                  if (!lv) return;
+                  if (lv.linked_custom_field_value) {
+                    customFieldTexts.push(String(lv.linked_custom_field_value));
+                  }
+                });
+              }
+            });
+          }
+
+          // Fallback: если это примитив или что‑то ещё, просто сериализуем
+          if (
+            !cf.custom_field_label &&
+            !cf.custom_field_value &&
+            typeof cf === 'string'
+          ) {
+            customFieldTexts.push(cf);
+          }
+        });
+      } else if (typeof position.custom_fields === 'object') {
+        // Формат: объект { key: value }
+        Object.values(position.custom_fields).forEach((v) => {
+          if (v !== undefined && v !== null) {
+            customFieldTexts.push(String(v));
+          }
+        });
+      } else if (typeof position.custom_fields === 'string') {
+        customFieldTexts.push(position.custom_fields);
+      }
+    }
+
+    // 2) Новый формат: есть только ID значений в custom_fields_values_ids,
+    // а сами значения берём из справочника кастомных полей (customFields из состояния)
+    if (
+      Array.isArray(position.custom_fields_values_ids) &&
+      position.custom_fields_values_ids.length > 0 &&
+      Array.isArray(customFields) &&
+      customFields.length > 0
+    ) {
+      const valueIdSet = new Set(
+        position.custom_fields_values_ids.map((v) => String(v)),
+      );
+
+      customFields.forEach((fieldDef) => {
+        if (!fieldDef || !Array.isArray(fieldDef.allowed_values)) return;
+
+        fieldDef.allowed_values.forEach((av) => {
+          if (!av) return;
+          const valueId = av.value_id ? String(av.value_id) : null;
+          if (!valueId || !valueIdSet.has(valueId)) return;
+
+          if (av.value) {
+            customFieldTexts.push(String(av.value));
+          }
+
+          if (Array.isArray(av.linked_custom_fields)) {
+            av.linked_custom_fields.forEach((lf) => {
+              if (!lf) return;
+              if (lf.linked_custom_field_label) {
+                customFieldTexts.push(String(lf.linked_custom_field_label));
+              }
+              if (Array.isArray(lf.linked_custom_field_values)) {
+                lf.linked_custom_field_values.forEach((lv) => {
+                  if (!lv) return;
+                  if (lv.linked_custom_field_value) {
+                    customFieldTexts.push(String(lv.linked_custom_field_value));
+                  }
+                });
+              }
+            });
+          }
+        });
+      });
+    }
+
+    if (customFieldTexts.length > 0) {
+      const customFieldsStr = customFieldTexts.join(' ').toLowerCase();
       if (customFieldsStr.includes(termLower)) {
         return true;
       }
     }
-    
+
     return false;
   };
 
@@ -474,6 +585,8 @@ function TreePanel({
       const response = await axios.get(`${API_BASE}/trees/${treeId}/structure`);
       const structure = response.data;
       
+      // Сохраняем исходную структуру дерева
+      setOriginalTreeStructure(structure);
       setTreeStructure(structure);
       if (onTreeStructureChange) {
         onTreeStructureChange(structure);
