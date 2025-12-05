@@ -135,7 +135,7 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var positions []Position
+	var positions []map[string]interface{}
 	for rows.Next() {
 		var p Position
 		var customFieldsIDsJSON []byte
@@ -153,7 +153,27 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 		if customFieldsValuesIDsJSON != nil {
 			json.Unmarshal(customFieldsValuesIDsJSON, &p.CustomFieldsValuesIDs)
 		}
-		positions = append(positions, p)
+
+		// Build nested custom_fields array
+		customFieldsArray, err := h.buildCustomFieldsArrayFromIDs(p.CustomFieldsIDs, p.CustomFieldsValuesIDs)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Build response object with custom_fields array
+		positionResponse := map[string]interface{}{
+			"id":                   p.ID,
+			"name":                 p.Name,
+			"description":          p.Description,
+			"custom_fields":        customFieldsArray,
+			"employee_full_name":   p.EmployeeFullName,
+			"employee_external_id": p.EmployeeExternalID,
+			"employee_profile_url": p.EmployeeProfileURL,
+			"created_at":           p.CreatedAt,
+			"updated_at":           p.UpdatedAt,
+		}
+		positions = append(positions, positionResponse)
 	}
 
 	// Get total count
@@ -356,8 +376,17 @@ func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
 	//     для верхнеуровневых полей должности.
 	//   - В positions.custom_fields_values_ids храним ID значений (custom_field_value_id)
 	//     как для основного поля, так и для всех привязанных (linked_custom_field_value_id).
-	customFieldsIDs := make([]uuid.UUID, 0)         // field IDs (custom_field_id)
-	customFieldsValuesIDs := make([]uuid.UUID, 0)   // value IDs (custom_field_value_id, linked_custom_field_value_id)
+	
+	// Save original custom_fields structure from request to return it in response
+	var originalCustomFields interface{}
+	if customFieldsRaw, ok := requestBody["custom_fields"]; ok {
+		originalCustomFields = customFieldsRaw
+	}
+	
+	// Use maps to track unique IDs and avoid duplicates
+	customFieldsIDsMap := make(map[uuid.UUID]bool)
+	customFieldsValuesIDsMap := make(map[uuid.UUID]bool)
+	
 	if customFieldsRaw, ok := requestBody["custom_fields"]; ok {
 		if customFieldsArray, ok := customFieldsRaw.([]interface{}); ok {
 			// Process each custom field
@@ -367,7 +396,7 @@ func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
 					if customFieldIDRaw, ok := cfMap["custom_field_id"]; ok {
 						if customFieldIDStr, ok := customFieldIDRaw.(string); ok && customFieldIDStr != "" {
 							if fieldID, err := uuid.Parse(customFieldIDStr); err == nil {
-								customFieldsIDs = append(customFieldsIDs, fieldID)
+								customFieldsIDsMap[fieldID] = true
 							}
 						}
 					}
@@ -378,7 +407,7 @@ func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
 						if customFieldValueIDStr, ok := customFieldValueIDRaw.(string); ok && customFieldValueIDStr != "" {
 							// Parse custom_field_value_id as UUID and store it in custom_fields_values_ids
 							if valueID, err := uuid.Parse(customFieldValueIDStr); err == nil {
-								customFieldsValuesIDs = append(customFieldsValuesIDs, valueID)
+								customFieldsValuesIDsMap[valueID] = true
 							}
 						}
 					}
@@ -392,7 +421,7 @@ func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
 									if linkedFieldIDStr, ok := linkedFieldIDRaw.(string); ok && linkedFieldIDStr != "" {
 										if fieldID, err := uuid.Parse(linkedFieldIDStr); err == nil {
 											// ID привязанного кастомного поля храним в custom_fields_ids
-											customFieldsIDs = append(customFieldsIDs, fieldID)
+											customFieldsIDsMap[fieldID] = true
 										}
 									}
 								}
@@ -405,7 +434,7 @@ func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
 											if linkedValueID != "" {
 												if valueID, err := uuid.Parse(linkedValueID); err == nil {
 													// Store linked value IDs in custom_fields_values_ids
-													customFieldsValuesIDs = append(customFieldsValuesIDs, valueID)
+													customFieldsValuesIDsMap[valueID] = true
 												}
 											}
 										}
@@ -417,6 +446,16 @@ func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
+
+	// Convert maps to slices
+	customFieldsIDs := make([]uuid.UUID, 0, len(customFieldsIDsMap))
+	for id := range customFieldsIDsMap {
+		customFieldsIDs = append(customFieldsIDs, id)
+	}
+	customFieldsValuesIDs := make([]uuid.UUID, 0, len(customFieldsValuesIDsMap))
+	for id := range customFieldsValuesIDsMap {
+		customFieldsValuesIDs = append(customFieldsValuesIDs, id)
 	}
 
 	customFieldsIDsArray := UUIDArray(customFieldsIDs)
@@ -440,16 +479,14 @@ func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get created position to return with nested custom_fields structure
+	// Get created position to return with timestamps
 	var p Position
-	var customFieldsIDsFromDB []byte
-	var customFieldsValuesIDsFromDB []byte
 	err = h.db.QueryRow(
-		`SELECT id, name, description, custom_fields_ids, custom_fields_values_ids, employee_full_name, 
+		`SELECT id, name, description, employee_full_name, 
 		employee_external_id, employee_profile_url, created_at, updated_at
 		FROM positions WHERE id = $1`,
 		positionID,
-	).Scan(&p.ID, &p.Name, &p.Description, &customFieldsIDsFromDB, &customFieldsValuesIDsFromDB,
+	).Scan(&p.ID, &p.Name, &p.Description,
 		&p.EmployeeFullName, &p.EmployeeExternalID, &p.EmployeeProfileURL,
 		&p.CreatedAt, &p.UpdatedAt)
 
@@ -458,25 +495,25 @@ func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if customFieldsIDsFromDB != nil {
-		json.Unmarshal(customFieldsIDsFromDB, &p.CustomFieldsIDs)
-	}
-	if customFieldsValuesIDsFromDB != nil {
-		json.Unmarshal(customFieldsValuesIDsFromDB, &p.CustomFieldsValuesIDs)
-	}
-
-	// Build nested custom_fields array
-	customFieldsArray, err := h.buildCustomFieldsArrayFromIDs(p.CustomFieldsIDs, p.CustomFieldsValuesIDs)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	// Enrich the original custom_fields structure from request with additional data from DB
+	// (key, label, value text) while preserving 100% structure match
+	var customFieldsForResponse interface{}
+	if originalCustomFields != nil {
+		enriched, err := h.enrichCustomFieldsFromRequest(originalCustomFields)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		customFieldsForResponse = enriched
+	} else {
+		customFieldsForResponse = []interface{}{}
 	}
 
 	response := map[string]interface{}{
 		"id":                   p.ID,
 		"name":                 p.Name,
 		"description":          p.Description,
-		"custom_fields":        customFieldsArray,
+		"custom_fields":        customFieldsForResponse,
 		"employee_full_name":   p.EmployeeFullName,
 		"employee_external_id": p.EmployeeExternalID,
 		"employee_profile_url": p.EmployeeProfileURL,
@@ -487,6 +524,197 @@ func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(response)
+}
+
+// enrichCustomFieldsFromRequest enriches the original custom_fields structure from request
+// with additional data from DB (key, label, value text) while preserving the original structure
+func (h *Handler) enrichCustomFieldsFromRequest(originalCustomFields interface{}) (interface{}, error) {
+	// Pre-load all custom field definitions
+	fieldRows, err := h.db.Query(`SELECT id, key, label FROM custom_fields`)
+	if err != nil {
+		return nil, err
+	}
+	defer fieldRows.Close()
+	
+	fieldInfoMap := make(map[string]struct {
+		Key   string
+		Label string
+	})
+	for fieldRows.Next() {
+		var fieldID uuid.UUID
+		var key, label string
+		if err := fieldRows.Scan(&fieldID, &key, &label); err == nil {
+			fieldInfoMap[fieldID.String()] = struct {
+				Key   string
+				Label string
+			}{Key: key, Label: label}
+		}
+	}
+
+	// Pre-load all custom field values
+	valueRows, err := h.db.Query(`SELECT id, value FROM custom_fields_values`)
+	if err != nil {
+		return nil, err
+	}
+	defer valueRows.Close()
+	
+	valueInfoMap := make(map[string]string)
+	for valueRows.Next() {
+		var valueID uuid.UUID
+		var value string
+		if err := valueRows.Scan(&valueID, &value); err == nil {
+			valueInfoMap[valueID.String()] = value
+		}
+	}
+
+	// Enrich the original structure
+	if customFieldsArray, ok := originalCustomFields.([]interface{}); ok {
+		enrichedArray := make([]interface{}, 0, len(customFieldsArray))
+		// Map to track linked fields that have been added as top-level items
+		// Key: linked_custom_field_id, Value: set of linked_custom_field_value_id
+		linkedFieldsAdded := make(map[string]map[string]bool)
+		
+		for _, cfItem := range customFieldsArray {
+			if cfMap, ok := cfItem.(map[string]interface{}); ok {
+				enrichedMap := make(map[string]interface{})
+				// Copy all original fields
+				for k, v := range cfMap {
+					enrichedMap[k] = v
+				}
+
+				// Add custom_field_key and custom_field_label if custom_field_id exists
+				if customFieldID, ok := cfMap["custom_field_id"].(string); ok && customFieldID != "" {
+					if fieldInfo, exists := fieldInfoMap[customFieldID]; exists {
+						enrichedMap["custom_field_key"] = fieldInfo.Key
+						enrichedMap["custom_field_label"] = fieldInfo.Label
+					}
+				}
+
+				// Add custom_field_value (text) if custom_field_value_id exists
+				if customFieldValueID, ok := cfMap["custom_field_value_id"].(string); ok && customFieldValueID != "" {
+					if valueText, exists := valueInfoMap[customFieldValueID]; exists {
+						enrichedMap["custom_field_value"] = valueText
+					}
+				}
+
+				// Enrich linked_custom_fields
+				if linkedFields, ok := cfMap["linked_custom_fields"].([]interface{}); ok {
+					enrichedLinkedFields := make([]interface{}, 0, len(linkedFields))
+					for _, lfItem := range linkedFields {
+						if lfMap, ok := lfItem.(map[string]interface{}); ok {
+							enrichedLinkedMap := make(map[string]interface{})
+							// Copy all original fields
+							for k, v := range lfMap {
+								enrichedLinkedMap[k] = v
+							}
+
+							// Add linked_custom_field_key and linked_custom_field_label if linked_custom_field_id exists
+							if linkedFieldID, ok := lfMap["linked_custom_field_id"].(string); ok && linkedFieldID != "" {
+								if fieldInfo, exists := fieldInfoMap[linkedFieldID]; exists {
+									enrichedLinkedMap["linked_custom_field_key"] = fieldInfo.Key
+									enrichedLinkedMap["linked_custom_field_label"] = fieldInfo.Label
+								}
+							}
+
+							// Enrich linked_custom_field_values
+							if linkedValues, ok := lfMap["linked_custom_field_values"].([]interface{}); ok {
+								enrichedLinkedValues := make([]interface{}, 0, len(linkedValues))
+								for _, lvItem := range linkedValues {
+									if lvMap, ok := lvItem.(map[string]interface{}); ok {
+										enrichedLinkedValueMap := make(map[string]interface{})
+										// Copy all original fields
+										for k, v := range lvMap {
+											enrichedLinkedValueMap[k] = v
+										}
+
+										// Add linked_custom_field_value (text) if linked_custom_field_value_id exists
+										if linkedValueID, ok := lvMap["linked_custom_field_value_id"].(string); ok && linkedValueID != "" {
+											if valueText, exists := valueInfoMap[linkedValueID]; exists {
+												enrichedLinkedValueMap["linked_custom_field_value"] = valueText
+											}
+										}
+
+										enrichedLinkedValues = append(enrichedLinkedValues, enrichedLinkedValueMap)
+									}
+								}
+								enrichedLinkedMap["linked_custom_field_values"] = enrichedLinkedValues
+							}
+
+							enrichedLinkedFields = append(enrichedLinkedFields, enrichedLinkedMap)
+						}
+					}
+					enrichedMap["linked_custom_fields"] = enrichedLinkedFields
+				}
+
+				enrichedArray = append(enrichedArray, enrichedMap)
+			}
+		}
+		
+		// Add linked custom fields as separate top-level items
+		// Iterate through enriched array to find linked fields
+		for _, cfItem := range enrichedArray {
+			if cfMap, ok := cfItem.(map[string]interface{}); ok {
+				if linkedFields, ok := cfMap["linked_custom_fields"].([]interface{}); ok {
+					for _, lfItem := range linkedFields {
+						if lfMap, ok := lfItem.(map[string]interface{}); ok {
+							linkedFieldID, hasLinkedFieldID := lfMap["linked_custom_field_id"].(string)
+							if !hasLinkedFieldID || linkedFieldID == "" {
+								continue
+							}
+							
+							// Initialize map for this linked field if not exists
+							if linkedFieldsAdded[linkedFieldID] == nil {
+								linkedFieldsAdded[linkedFieldID] = make(map[string]bool)
+							}
+							
+							// Process each linked value
+							if linkedValues, ok := lfMap["linked_custom_field_values"].([]interface{}); ok {
+								for _, lvItem := range linkedValues {
+									if lvMap, ok := lvItem.(map[string]interface{}); ok {
+										linkedValueID, hasLinkedValueID := lvMap["linked_custom_field_value_id"].(string)
+										if !hasLinkedValueID || linkedValueID == "" {
+											continue
+										}
+										
+										// Check if we already added this combination
+										if linkedFieldsAdded[linkedFieldID][linkedValueID] {
+											continue
+										}
+										
+										// Mark as added
+										linkedFieldsAdded[linkedFieldID][linkedValueID] = true
+										
+										// Create top-level item for linked field
+										topLevelLinkedField := make(map[string]interface{})
+										topLevelLinkedField["custom_field_id"] = linkedFieldID
+										topLevelLinkedField["custom_field_value_id"] = linkedValueID
+										
+										// Add field info
+										if fieldInfo, exists := fieldInfoMap[linkedFieldID]; exists {
+											topLevelLinkedField["custom_field_key"] = fieldInfo.Key
+											topLevelLinkedField["custom_field_label"] = fieldInfo.Label
+										}
+										
+										// Add value text
+										if valueText, exists := valueInfoMap[linkedValueID]; exists {
+											topLevelLinkedField["custom_field_value"] = valueText
+										}
+										
+										enrichedArray = append(enrichedArray, topLevelLinkedField)
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		return enrichedArray, nil
+	}
+
+	// If structure is not as expected, return as-is
+	return originalCustomFields, nil
 }
 
 // buildCustomFieldsArrayFromIDs builds the nested custom_fields array structure
@@ -1046,8 +1274,10 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 	//     для верхнеуровневых полей должности.
 	//   - В positions.custom_fields_values_ids храним ID значений (custom_field_value_id)
 	//     как для основного поля, так и для всех привязанных (linked_custom_field_value_id).
-	customFieldsIDs := make([]uuid.UUID, 0)       // field IDs (custom_field_id)
-	customFieldsValuesIDs := make([]uuid.UUID, 0) // value IDs (custom_field_value_id, linked_custom_field_value_id)
+	// Use maps to track unique IDs and avoid duplicates
+	customFieldsIDsMap := make(map[uuid.UUID]bool)
+	customFieldsValuesIDsMap := make(map[uuid.UUID]bool)
+	
 	if customFieldsRaw, ok := requestBody["custom_fields"]; ok {
 		if customFieldsArray, ok := customFieldsRaw.([]interface{}); ok {
 			log.Printf("[UpdatePosition] Processing custom_fields array with %d items", len(customFieldsArray))
@@ -1060,7 +1290,7 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 					if customFieldIDRaw, ok := cfMap["custom_field_id"]; ok {
 						if customFieldIDStr, ok := customFieldIDRaw.(string); ok && customFieldIDStr != "" {
 							if fieldID, err := uuid.Parse(customFieldIDStr); err == nil {
-								customFieldsIDs = append(customFieldsIDs, fieldID)
+								customFieldsIDsMap[fieldID] = true
 								log.Printf("[UpdatePosition] Added custom_field_id to customFieldsIDs: %s", fieldID.String())
 							} else {
 								log.Printf("[UpdatePosition] Error parsing custom_field_id UUID: %v", err)
@@ -1081,7 +1311,7 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 							// Parse custom_field_value_id as UUID and store it in custom_fields_values_ids
 							if valueID, err := uuid.Parse(customFieldValueIDStr); err == nil {
 								log.Printf("[UpdatePosition] Successfully parsed UUID: %s, adding to customFieldsValuesIDs", valueID.String())
-								customFieldsValuesIDs = append(customFieldsValuesIDs, valueID)
+								customFieldsValuesIDsMap[valueID] = true
 							} else {
 								log.Printf("[UpdatePosition] Error parsing UUID: %v", err)
 							}
@@ -1101,7 +1331,7 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 									if linkedFieldIDStr, ok := linkedFieldIDRaw.(string); ok && linkedFieldIDStr != "" {
 										if fieldID, err := uuid.Parse(linkedFieldIDStr); err == nil {
 											// ID привязанного кастомного поля храним в custom_fields_ids
-											customFieldsIDs = append(customFieldsIDs, fieldID)
+											customFieldsIDsMap[fieldID] = true
 										}
 									}
 								}
@@ -1114,7 +1344,7 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 											if linkedValueID != "" {
 												if valueID, err := uuid.Parse(linkedValueID); err == nil {
 													// Store linked value IDs in custom_fields_values_ids
-													customFieldsValuesIDs = append(customFieldsValuesIDs, valueID)
+													customFieldsValuesIDsMap[valueID] = true
 												}
 											}
 										}
@@ -1126,6 +1356,16 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
+
+	// Convert maps to slices
+	customFieldsIDs := make([]uuid.UUID, 0, len(customFieldsIDsMap))
+	for id := range customFieldsIDsMap {
+		customFieldsIDs = append(customFieldsIDs, id)
+	}
+	customFieldsValuesIDs := make([]uuid.UUID, 0, len(customFieldsValuesIDsMap))
+	for id := range customFieldsValuesIDsMap {
+		customFieldsValuesIDs = append(customFieldsValuesIDs, id)
 	}
 
 	log.Printf("[UpdatePosition] Final customFieldsIDs count: %d, IDs: %v", len(customFieldsIDs), customFieldsIDs)

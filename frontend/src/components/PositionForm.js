@@ -466,60 +466,146 @@ function PositionForm({
         </div>
         {Object.keys(formData.custom_fields).length > 0 && (
           <div className="custom-fields-chips">
-            {Object.entries(formData.custom_fields).map(([key, value]) => {
-              const fieldDef = Array.isArray(availableCustomFields)
-                ? availableCustomFields.find(f => f.key === key)
-                : null;
-              // Базовое отображаемое значение (с учётом того, что в состоянии может храниться value_id)
-              let displayValue = getDisplayValueForCustomField(key, value);
-              // Добавляем к основному значению привязанные значения (если они заданы в определении),
-              // не создавая отдельные кастомные поля. Формат: "Основное - Привязанное 1 - Привязанное 2".
-              if (fieldDef && Array.isArray(fieldDef.allowed_values)) {
-                const raw = value !== undefined && value !== null ? String(value).trim() : '';
+            {(() => {
+              // Сначала определяем, какие поля являются linked полями для других полей
+              // чтобы не показывать их отдельно, а только через тире в основном поле
+              const linkedFieldKeys = new Set();
+              const fieldsToDisplay = [];
 
-                if (raw) {
-                  // Находим выбранное значение в allowed_values по ID или тексту
-                  const matchedMain = fieldDef.allowed_values.find(av => {
+              // Проходим по всем полям и определяем, какие являются linked
+              Object.entries(formData.custom_fields).forEach(([key, value]) => {
+                const fieldDef = Array.isArray(availableCustomFields)
+                  ? availableCustomFields.find(f => f.key === key)
+                  : null;
+
+                if (!fieldDef || !Array.isArray(fieldDef.allowed_values)) {
+                  // Не enum поле - показываем как есть
+                  fieldsToDisplay.push({ key, value, fieldDef });
+                  return;
+                }
+
+                const raw = value !== undefined && value !== null ? String(value).trim() : '';
+                if (!raw) {
+                  fieldsToDisplay.push({ key, value, fieldDef });
+                  return;
+                }
+
+                // Находим выбранное значение в allowed_values по ID или тексту
+                const matchedMain = fieldDef.allowed_values.find(av => {
+                  if (!av) return false;
+                  if (typeof av === 'string') {
+                    return raw === av.trim();
+                  }
+                  const valueStr = av.value ? String(av.value).trim() : '';
+                  const idStr = av.value_id ? String(av.value_id).trim() : '';
+                  return raw === idStr || raw === valueStr;
+                });
+
+                // Проверяем, является ли это поле linked полем для другого поля
+                let isLinkedField = false;
+                // Проверяем, не является ли оно само linked полем для другого
+                Object.entries(formData.custom_fields).forEach(([otherKey, otherValue]) => {
+                  if (otherKey === key || linkedFieldKeys.has(key)) return;
+                  const otherFieldDef = Array.isArray(availableCustomFields)
+                    ? availableCustomFields.find(f => f.key === otherKey)
+                    : null;
+                  if (!otherFieldDef || !Array.isArray(otherFieldDef.allowed_values)) return;
+
+                  const otherRaw = otherValue !== undefined && otherValue !== null ? String(otherValue).trim() : '';
+                  if (!otherRaw) return;
+
+                  const otherMatched = otherFieldDef.allowed_values.find(av => {
                     if (!av) return false;
                     if (typeof av === 'string') {
-                      return raw === av.trim();
+                      return otherRaw === av.trim();
                     }
                     const valueStr = av.value ? String(av.value).trim() : '';
                     const idStr = av.value_id ? String(av.value_id).trim() : '';
-                    return raw === idStr || raw === valueStr;
+                    return otherRaw === idStr || otherRaw === valueStr;
                   });
 
-                  if (matchedMain && typeof matchedMain === 'object' && Array.isArray(matchedMain.linked_custom_fields)) {
-                    const linkedDisplayValues = [];
-
-                    matchedMain.linked_custom_fields.forEach(linkedField => {
-                      if (!Array.isArray(linkedField.linked_custom_field_values)) {
-                        return;
+                  if (otherMatched && typeof otherMatched === 'object' && Array.isArray(otherMatched.linked_custom_fields)) {
+                    // Проверяем, является ли текущее поле linked полем для otherMatched
+                    otherMatched.linked_custom_fields.forEach(linkedField => {
+                      const linkedFieldKey = linkedField.linked_custom_field_key;
+                      if (linkedFieldKey === key) {
+                        isLinkedField = true;
+                        linkedFieldKeys.add(key);
                       }
-                      linkedField.linked_custom_field_values.forEach(linkedVal => {
-                        const txt = linkedVal && linkedVal.linked_custom_field_value
-                          ? String(linkedVal.linked_custom_field_value).trim()
-                          : '';
-                        if (txt) {
-                          linkedDisplayValues.push(txt);
+                    });
+                  }
+                });
+
+                if (!isLinkedField) {
+                  fieldsToDisplay.push({ key, value, fieldDef, matchedMain });
+                }
+              });
+
+              // Теперь отображаем поля, добавляя linked значения через тире
+              return fieldsToDisplay.map(({ key, value, fieldDef, matchedMain }) => {
+                // Базовое отображаемое значение (с учётом того, что в состоянии может храниться value_id)
+                let displayValue = getDisplayValueForCustomField(key, value);
+                
+                // Добавляем к основному значению привязанные значения из определения поля
+                if (fieldDef && Array.isArray(fieldDef.allowed_values)) {
+                  const raw = value !== undefined && value !== null ? String(value).trim() : '';
+
+                  if (raw) {
+                    // Используем matchedMain, если он уже найден, иначе ищем заново
+                    let mainValue = matchedMain;
+                    if (!mainValue) {
+                      mainValue = fieldDef.allowed_values.find(av => {
+                        if (!av) return false;
+                        if (typeof av === 'string') {
+                          return raw === av.trim();
+                        }
+                        const valueStr = av.value ? String(av.value).trim() : '';
+                        const idStr = av.value_id ? String(av.value_id).trim() : '';
+                        return raw === idStr || raw === valueStr;
+                      });
+                    }
+
+                    if (mainValue && typeof mainValue === 'object' && Array.isArray(mainValue.linked_custom_fields)) {
+                      const linkedDisplayValues = [];
+
+                      mainValue.linked_custom_fields.forEach(linkedField => {
+                        const linkedFieldKey = linkedField.linked_custom_field_key;
+                        // Проверяем, есть ли это linked поле в formData.custom_fields
+                        const linkedFieldValue = formData.custom_fields[linkedFieldKey];
+                        if (linkedFieldValue !== undefined && linkedFieldValue !== null) {
+                          // Получаем отображаемое значение для linked поля
+                          const linkedDisplayValue = getDisplayValueForCustomField(linkedFieldKey, linkedFieldValue);
+                          if (linkedDisplayValue) {
+                            linkedDisplayValues.push(linkedDisplayValue);
+                          }
+                        } else if (Array.isArray(linkedField.linked_custom_field_values)) {
+                          // Если linked поле не выбрано в formData, используем значения из определения
+                          linkedField.linked_custom_field_values.forEach(linkedVal => {
+                            const txt = linkedVal && linkedVal.linked_custom_field_value
+                              ? String(linkedVal.linked_custom_field_value).trim()
+                              : '';
+                            if (txt) {
+                              linkedDisplayValues.push(txt);
+                            }
+                          });
                         }
                       });
-                    });
 
-                    if (linkedDisplayValues.length > 0) {
-                      displayValue = `${displayValue} - ${linkedDisplayValues.join(' - ')}`;
+                      if (linkedDisplayValues.length > 0) {
+                        displayValue = `${displayValue} - ${linkedDisplayValues.join(' - ')}`;
+                      }
                     }
                   }
                 }
-              }
 
-              return (
-                <span key={key} className="custom-field-chip">
-                  <span className="custom-field-chip-label">{fieldDef ? fieldDef.label : key}:</span>
-                  <span className="custom-field-chip-value">{displayValue}</span>
-                </span>
-              );
-            })}
+                return (
+                  <span key={key} className="custom-field-chip">
+                    <span className="custom-field-chip-label">{fieldDef ? fieldDef.label : key}:</span>
+                    <span className="custom-field-chip-value">{displayValue}</span>
+                  </span>
+                );
+              });
+            })()}
           </div>
         )}
       </div>

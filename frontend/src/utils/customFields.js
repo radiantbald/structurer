@@ -69,39 +69,60 @@ export function convertCustomFieldsObjectToArray(customFieldsObj, customFieldsDe
     if (Array.isArray(fieldDef.allowed_values)) {
       const searchValue = mainValueFromRaw.trim();
 
-      // Сначала пытаемся найти по точному совпадению значения или value_id
-      selectedValue = fieldDef.allowed_values.find((av) => {
-        if (!av) return false;
-
-        const valueStr = av.value ? String(av.value).trim() : '';
-        const idStr = av.value_id
-          ? (typeof av.value_id === 'string'
-              ? av.value_id.trim()
-              : String(av.value_id))
-          : '';
-
-        return valueStr === searchValue || idStr === searchValue;
-      });
-
-      // Если не нашли по точному совпадению, пробуем более мягкий поиск по подстроке
-      // Но только если основное значение достаточно длинное, чтобы избежать ложных совпадений
-      if (!selectedValue && searchValue && searchValue.length >= 3) {
+      // ВАЖНО: Сначала проверяем, является ли searchValue валидным UUID (value_id)
+      // Если да, то ищем значение ТОЛЬКО по этому UUID в allowed_values текущего поля
+      // Это гарантирует, что мы используем правильный value_id, связанный именно с этим полем
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(searchValue);
+      
+      if (isUUID) {
+        // Если это UUID, ищем значение ТОЛЬКО по value_id в allowed_values этого поля
         selectedValue = fieldDef.allowed_values.find((av) => {
           if (!av) return false;
-          const valueStr = av.value ? String(av.value).trim() : '';
-          // Используем более строгое условие: одно должно содержать другое
-          // и они должны быть достаточно похожи по длине
-          if (valueStr.length >= 3) {
-            const contains = valueStr.includes(searchValue) || searchValue.includes(valueStr);
-            if (contains) {
-              // Проверяем, что длины достаточно похожи (хотя бы 70% совпадения)
-              const minLen = Math.min(valueStr.length, searchValue.length);
-              const maxLen = Math.max(valueStr.length, searchValue.length);
-              return minLen / maxLen >= 0.7;
-            }
-          }
-          return false;
+          const idStr = av.value_id
+            ? (typeof av.value_id === 'string'
+                ? av.value_id.trim()
+                : String(av.value_id))
+            : '';
+          return idStr === searchValue;
         });
+      }
+      
+      // Если не нашли по UUID или это не UUID, ищем по тексту
+      if (!selectedValue) {
+        // Сначала пытаемся найти по точному совпадению значения или value_id
+        selectedValue = fieldDef.allowed_values.find((av) => {
+          if (!av) return false;
+
+          const valueStr = av.value ? String(av.value).trim() : '';
+          const idStr = av.value_id
+            ? (typeof av.value_id === 'string'
+                ? av.value_id.trim()
+                : String(av.value_id))
+            : '';
+
+          return valueStr === searchValue || idStr === searchValue;
+        });
+
+        // Если не нашли по точному совпадению, пробуем более мягкий поиск по подстроке
+        // Но только если основное значение достаточно длинное, чтобы избежать ложных совпадений
+        if (!selectedValue && searchValue && searchValue.length >= 3) {
+          selectedValue = fieldDef.allowed_values.find((av) => {
+            if (!av) return false;
+            const valueStr = av.value ? String(av.value).trim() : '';
+            // Используем более строгое условие: одно должно содержать другое
+            // и они должны быть достаточно похожи по длине
+            if (valueStr.length >= 3) {
+              const contains = valueStr.includes(searchValue) || searchValue.includes(valueStr);
+              if (contains) {
+                // Проверяем, что длины достаточно похожи (хотя бы 70% совпадения)
+                const minLen = Math.min(valueStr.length, searchValue.length);
+                const maxLen = Math.max(valueStr.length, searchValue.length);
+                return minLen / maxLen >= 0.7;
+              }
+            }
+            return false;
+          });
+        }
       }
     }
 
