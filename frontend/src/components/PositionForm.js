@@ -7,6 +7,7 @@ function PositionForm({
   position,
   customFields,
   customFieldsArray,
+  customFieldsOrder,
   isEditing,
   onEdit,
   onCancel,
@@ -46,6 +47,7 @@ function PositionForm({
   const [availableCustomFields, setAvailableCustomFields] = useState([]);
   const [newCustomFieldKey, setNewCustomFieldKey] = useState('');
   const [showCustomFieldsEditor, setShowCustomFieldsEditor] = useState(false);
+  const [customFieldsOrderState, setCustomFieldsOrderState] = useState([]);
   const titleInputRef = useRef(null);
 
   useEffect(() => {
@@ -60,6 +62,8 @@ function PositionForm({
         employee_external_id: position.employee_external_id || '',
         employee_profile_url: position.employee_profile_url || ''
       });
+      // Сохраняем порядок полей из позиции
+      setCustomFieldsOrderState(Array.isArray(customFieldsOrder) ? [...customFieldsOrder] : []);
     } else {
       setFormData({
         name: '',
@@ -70,8 +74,9 @@ function PositionForm({
         employee_external_id: '',
         employee_profile_url: ''
       });
+      setCustomFieldsOrderState([]);
     }
-  }, [position]);
+  }, [position, customFieldsOrder]);
 
   useEffect(() => {
     // Гарантируем, что availableCustomFields всегда массив,
@@ -114,6 +119,38 @@ function PositionForm({
     }
 
     return matched.value ? String(matched.value).trim() : raw;
+  };
+
+  // Сортирует кастомные поля с учетом сохраненного порядка и уровней дерева
+  // Сначала использует сохраненный порядок, затем сортирует по уровням дерева
+  const sortCustomFields = (customFieldsEntries) => {
+    // Если есть сохраненный порядок, используем его
+    if (Array.isArray(customFieldsOrderState) && customFieldsOrderState.length > 0) {
+      const orderMap = new Map();
+      const entriesMap = new Map(customFieldsEntries);
+      
+      // Создаем массив в сохраненном порядке
+      const ordered = [];
+      const unordered = [];
+      
+      customFieldsOrderState.forEach(key => {
+        if (entriesMap.has(key)) {
+          ordered.push([key, entriesMap.get(key)]);
+        }
+      });
+      
+      // Добавляем новые поля, которых нет в порядке
+      customFieldsEntries.forEach(([key, value]) => {
+        if (!customFieldsOrderState.includes(key)) {
+          unordered.push([key, value]);
+        }
+      });
+      
+      return [...ordered, ...unordered];
+    }
+    
+    // Если нет сохраненного порядка, используем сортировку по уровням дерева
+    return sortCustomFieldsByTreeLevels(customFieldsEntries);
   };
 
   // Сортирует кастомные поля по уровням текущего дерева
@@ -264,6 +301,13 @@ function PositionForm({
         [key]: value
       }
     }));
+    // Добавляем ключ в порядок, если его там еще нет
+    setCustomFieldsOrderState(prev => {
+      if (!prev.includes(key)) {
+        return [...prev, key];
+      }
+      return prev;
+    });
   };
 
   const handleRemoveCustomField = (key) => {
@@ -275,12 +319,21 @@ function PositionForm({
         custom_fields: newCustomFields
       };
     });
+    // Удаляем ключ из порядка
+    setCustomFieldsOrderState(prev => prev.filter(k => k !== key));
   };
 
   const handleAddCustomField = () => {
     if (newCustomFieldKey) {
       const field = availableCustomFields.find(f => f.key === newCustomFieldKey);
       if (field) {
+        // Добавляем поле в конец порядка, если его там еще нет
+        setCustomFieldsOrderState(prev => {
+          if (!prev.includes(newCustomFieldKey)) {
+            return [...prev, newCustomFieldKey];
+          }
+          return prev;
+        });
         handleCustomFieldChange(newCustomFieldKey, '');
         setNewCustomFieldKey('');
       }
@@ -296,7 +349,8 @@ function PositionForm({
         formData.employee_last_name,
         formData.employee_first_name,
         formData.employee_middle_name
-      )
+      ),
+      custom_fields_order: customFieldsOrderState
     };
     // Удаляем временные поля перед отправкой
     delete dataToSave.employee_last_name;
@@ -355,7 +409,7 @@ function PositionForm({
           <div className="position-form-section position-form-section-custom-fields">
             <div className="position-form-section-divider"></div>
             <div className="custom-fields-chips">
-              {sortCustomFieldsByTreeLevels(Object.entries(formData.custom_fields)).map(([key, value]) => {
+              {sortCustomFields(Object.entries(formData.custom_fields)).map(([key, value]) => {
                 const fieldDef = Array.isArray(availableCustomFields)
                   ? availableCustomFields.find(f => f.key === key)
                   : null;
@@ -541,6 +595,19 @@ function PositionForm({
 
                 // Проверяем, является ли это поле linked полем для другого поля
                 let isLinkedField = false;
+                
+                // ВАЖНО: Проверяем, пришло ли это поле как отдельный объект от бэкенда
+                // Если да, то его нужно показывать, даже если оно также является linked полем
+                const isStandaloneField = Array.isArray(customFieldsArray) 
+                  ? customFieldsArray.some(item => item.custom_field_key === key)
+                  : false;
+                
+                // Если поле пришло как отдельный объект от бэкенда, всегда показываем его
+                if (isStandaloneField) {
+                  fieldsToDisplay.push({ key, value, fieldDef, matchedMain });
+                  return;
+                }
+                
                 // Проверяем, не является ли оно само linked полем для другого
                 Object.entries(formData.custom_fields).forEach(([otherKey, otherValue]) => {
                   if (otherKey === key || linkedFieldKeys.has(key)) return;
@@ -586,10 +653,11 @@ function PositionForm({
                 fieldsMap.set(field.key, field);
               });
               
-              // Сортируем ключи полей по уровням дерева
-              const sortedKeys = sortCustomFieldsByTreeLevels(
+              // Сортируем ключи полей с учетом сохраненного порядка
+              const sortedEntries = sortCustomFields(
                 fieldsToDisplay.map(({ key, value }) => [key, value])
-              ).map(([key]) => key);
+              );
+              const sortedKeys = sortedEntries.map(([key]) => key);
               
               // Восстанавливаем отсортированный массив полей
               const sortedFieldsToDisplay = sortedKeys

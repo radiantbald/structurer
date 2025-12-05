@@ -19,9 +19,12 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
     } else if (positionId === null) {
       if (initialPath) {
         // New position with path (from tree node)
+        // Сохраняем порядок полей из initialPath
+        const pathOrder = Object.keys(initialPath);
         setPosition({
           name: initialName || '',
           custom_fields: initialPath,
+          custom_fields_order: pathOrder,
           employee_full_name: '',
           employee_external_id: '',
           employee_profile_url: ''
@@ -69,10 +72,17 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
         );
       }
 
+      // Удаляем ключ из порядка
+      let updatedOrder = prev.custom_fields_order;
+      if (Array.isArray(prev.custom_fields_order)) {
+        updatedOrder = prev.custom_fields_order.filter(key => key !== fieldKey);
+      }
+
       return {
         ...prev,
         custom_fields: restCustomFields,
         custom_fields_array: updatedArray,
+        custom_fields_order: updatedOrder,
       };
     });
   }, [deletedCustomField]);
@@ -90,6 +100,9 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
       const originalCustomFieldsArray = Array.isArray(positionData.custom_fields) 
         ? positionData.custom_fields 
         : null;
+      
+      // Сохраняем порядок ключей полей из исходного массива
+      const customFieldsOrder = [];
       
       // Convert custom_fields array format to object format for PositionForm
       // API returns array with structure: [{custom_field_id, custom_field_key, custom_field_label, custom_field_value, linked_custom_fields}]
@@ -113,14 +126,64 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
             const storedMainValue = rawValueId || rawValueText;
             if (storedMainValue) {
               customFieldsObj[fieldKey] = storedMainValue;
+              // Сохраняем порядок основного поля
+              if (!customFieldsOrder.includes(fieldKey)) {
+                customFieldsOrder.push(fieldKey);
+              }
+            }
+
+            // Добавляем linked поля как отдельные записи в объект custom_fields
+            // Это необходимо, чтобы при редактировании linked поля не пропадали
+            if (item.linked_custom_fields && Array.isArray(item.linked_custom_fields)) {
+              item.linked_custom_fields.forEach((linkedField) => {
+                if (!linkedField || !linkedField.linked_custom_field_key) {
+                  return;
+                }
+
+                const linkedFieldKey = linkedField.linked_custom_field_key;
+                
+                // Если это поле уже есть в объекте, не перезаписываем его
+                // (приоритет у явно установленных значений)
+                if (customFieldsObj.hasOwnProperty(linkedFieldKey)) {
+                  return;
+                }
+
+                // Обрабатываем значения linked поля
+                if (linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
+                  // Берем первое значение из linked_custom_field_values
+                  // (обычно оно одно)
+                  const firstLinkedValue = linkedField.linked_custom_field_values[0];
+                  if (firstLinkedValue) {
+                    // Приоритет отдаем ID, если он есть, иначе текстовому значению
+                    const linkedValueId = firstLinkedValue.linked_custom_field_value_id
+                      ? String(firstLinkedValue.linked_custom_field_value_id).trim()
+                      : '';
+                    const linkedValueText = firstLinkedValue.linked_custom_field_value
+                      ? String(firstLinkedValue.linked_custom_field_value).trim()
+                      : '';
+
+                    const storedLinkedValue = linkedValueId || linkedValueText;
+                    if (storedLinkedValue) {
+                      customFieldsObj[linkedFieldKey] = storedLinkedValue;
+                      // Сохраняем порядок linked поля (после основного поля)
+                      if (!customFieldsOrder.includes(linkedFieldKey)) {
+                        customFieldsOrder.push(linkedFieldKey);
+                      }
+                    }
+                  }
+                }
+              });
             }
           }
         });
         positionData.custom_fields = customFieldsObj;
         // Store original array format for display
         positionData.custom_fields_array = originalCustomFieldsArray;
+        // Store order of custom fields keys
+        positionData.custom_fields_order = customFieldsOrder;
       } else if (!positionData.custom_fields || typeof positionData.custom_fields !== 'object') {
         positionData.custom_fields = {};
+        positionData.custom_fields_order = [];
       }
       
       setPosition(positionData);
@@ -157,9 +220,12 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
   const handleSave = async (positionData) => {
     try {
       // Преобразуем custom_fields из объекта в массив с правильной структурой
+      // Используем сохраненный порядок полей из данных формы, если он есть
+      const customFieldsOrder = positionData.custom_fields_order || position?.custom_fields_order || null;
       const customFieldsArray = convertCustomFieldsObjectToArray(
         positionData.custom_fields,
-        customFields
+        customFields,
+        customFieldsOrder
       );
       
       // Отладочное логирование
@@ -242,6 +308,7 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
         position={position}
         customFields={customFields}
         customFieldsArray={position?.custom_fields_array}
+        customFieldsOrder={position?.custom_fields_order}
         isEditing={isEditing}
         onEdit={handleEdit}
         onCancel={handleCancel}

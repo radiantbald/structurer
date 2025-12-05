@@ -15,7 +15,8 @@
 
 // customFieldsObj: { [field_key]: string | value_id | "Main - Linked1 - Linked2" | "Main (Linked1, Linked2)" }
 // customFieldsDefinitions: массив определений кастомных полей с allowed_values
-export function convertCustomFieldsObjectToArray(customFieldsObj, customFieldsDefinitions) {
+// customFieldsOrder: массив ключей полей в нужном порядке (опционально)
+export function convertCustomFieldsObjectToArray(customFieldsObj, customFieldsDefinitions, customFieldsOrder = null) {
   if (!customFieldsObj || typeof customFieldsObj !== 'object') {
     return [];
   }
@@ -23,7 +24,20 @@ export function convertCustomFieldsObjectToArray(customFieldsObj, customFieldsDe
   const result = [];
   const defs = Array.isArray(customFieldsDefinitions) ? customFieldsDefinitions : [];
 
-  Object.entries(customFieldsObj).forEach(([fieldKey, fieldValueRaw]) => {
+  // Определяем порядок обработки полей
+  let fieldsToProcess;
+  if (Array.isArray(customFieldsOrder) && customFieldsOrder.length > 0) {
+    // Используем сохраненный порядок, но добавляем новые поля в конец
+    const existingKeys = new Set(customFieldsOrder);
+    const newKeys = Object.keys(customFieldsObj).filter(key => !existingKeys.has(key));
+    fieldsToProcess = [...customFieldsOrder.filter(key => key in customFieldsObj), ...newKeys];
+  } else {
+    // Если порядка нет, используем порядок из Object.keys (может быть нестабильным)
+    fieldsToProcess = Object.keys(customFieldsObj);
+  }
+
+  fieldsToProcess.forEach((fieldKey) => {
+    const fieldValueRaw = customFieldsObj[fieldKey];
     if (fieldValueRaw === undefined || fieldValueRaw === null) {
       return;
     }
