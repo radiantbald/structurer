@@ -741,12 +741,30 @@ func buildTreeLevel(positions []struct {
 					}
 				}
 
+				// Get custom_field_value_id from matched value or position details
+				var customFieldValueID *string
+				if matchedAllowedValue != nil {
+					valueIDStr := matchedAllowedValue.ValueID.String()
+					customFieldValueID = &valueIDStr
+				}
+				// Override with value from position details if available
+				if len(groupPositions) > 0 {
+					repPos := groupPositions[0]
+					if cf, ok := repPos.CustomFieldDetails[fieldKey]; ok {
+						if cf.CustomFieldValueID != uuid.Nil {
+							valueIDStr := cf.CustomFieldValueID.String()
+							customFieldValueID = &valueIDStr
+						}
+					}
+				}
+
 				nodes = append(nodes, TreeNode{
 					Type:               "custom_field_value",
 					LevelOrder:         &levelOrder,
 					CustomFieldID:      &customFieldID,
 					CustomFieldKey:     &customFieldKey,
 					CustomFieldValue:   &originalValue,
+					CustomFieldValueID: customFieldValueID,
 					LinkedCustomFields: linkedFields,
 					Children:           children,
 				})
@@ -768,6 +786,13 @@ func buildTreeLevel(positions []struct {
 				customFieldID := fieldDef.ID.String()
 				customFieldKey := fieldKey
 				customFieldValue := mainValueName
+				
+				// Get custom_field_value_id from matched value
+				var customFieldValueID *string
+				if matchedAllowedValue != nil {
+					valueIDStr := matchedAllowedValue.ValueID.String()
+					customFieldValueID = &valueIDStr
+				}
 
 				nodes = append(nodes, TreeNode{
 					Type:              "custom_field_value",
@@ -775,6 +800,7 @@ func buildTreeLevel(positions []struct {
 					CustomFieldID:      &customFieldID,
 					CustomFieldKey:     &customFieldKey,
 					CustomFieldValue:   &customFieldValue,
+					CustomFieldValueID: customFieldValueID,
 					LinkedCustomFields: linkedFields,
 					Children:           children,
 				})
@@ -828,12 +854,20 @@ func buildTreeLevel(positions []struct {
 				customFieldKey = &fieldKeyCopy
 			}
 
+			// Get custom_field_value_id from matched value
+			var customFieldValueID *string
+			if matchedAllowedValue != nil {
+				valueIDStr := matchedAllowedValue.ValueID.String()
+				customFieldValueID = &valueIDStr
+			}
+
 			nodes = append(nodes, TreeNode{
 				Type:              "custom_field_value",
 				LevelOrder:         &levelOrder,
 				CustomFieldID:      customFieldID,
 				CustomFieldKey:     customFieldKey,
 				CustomFieldValue:   &displayValue,
+				CustomFieldValueID: customFieldValueID,
 				LinkedCustomFields: linkedFields,
 				Children:           children,
 			})

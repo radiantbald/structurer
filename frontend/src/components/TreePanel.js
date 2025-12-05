@@ -654,26 +654,59 @@ function TreePanel({
       return [];
     }
 
-    // Находим выбранное основное значение по тексту/ID
-    const matchedMain = fieldDef.allowed_values.find((av) => {
-      if (!av) return false;
-      const valueStr = av.value ? String(av.value).trim() : '';
-      const idStr = av.value_id
-        ? (typeof av.value_id === 'string'
-            ? av.value_id.trim()
-            : String(av.value_id))
-        : '';
-      return valueStr === mainValue || idStr === mainValue;
-    });
+    // ВАЖНО: Если в узле есть custom_field_value_id, используем его напрямую
+    // Это гарантирует, что мы используем правильный ID, связанный именно с этим узлом
+    const nodeValueId = node.custom_field_value_id
+      ? (typeof node.custom_field_value_id === 'string'
+          ? node.custom_field_value_id.trim()
+          : String(node.custom_field_value_id))
+      : null;
+
+    // Находим выбранное основное значение по тексту/ID или по custom_field_value_id из узла
+    let matchedMain = null;
+    if (nodeValueId) {
+      // Если есть ID в узле, ищем значение ТОЛЬКО по этому ID
+      matchedMain = fieldDef.allowed_values.find((av) => {
+        if (!av) return false;
+        const idStr = av.value_id
+          ? (typeof av.value_id === 'string'
+              ? av.value_id.trim()
+              : String(av.value_id))
+          : '';
+        return idStr === nodeValueId;
+      });
+    }
+    
+    // Если не нашли по ID или ID нет, ищем по тексту
+    if (!matchedMain) {
+      matchedMain = fieldDef.allowed_values.find((av) => {
+        if (!av) return false;
+        const valueStr = av.value ? String(av.value).trim() : '';
+        const idStr = av.value_id
+          ? (typeof av.value_id === 'string'
+              ? av.value_id.trim()
+              : String(av.value_id))
+          : '';
+        return valueStr === mainValue || idStr === mainValue;
+      });
+    }
 
     if (!matchedMain) {
-      console.log('[buildCustomFieldsFromNode] Main value not found in allowed_values:', mainValue);
+      console.log('[buildCustomFieldsFromNode] Main value not found in allowed_values:', {
+        mainValue,
+        nodeValueId,
+        availableValues: fieldDef.allowed_values.map(av => ({
+          value: av.value,
+          value_id: av.value_id
+        }))
+      });
       return [];
     }
     
     console.log('[buildCustomFieldsFromNode] Found main value:', {
       value: matchedMain.value,
       value_id: matchedMain.value_id,
+      nodeValueId,
       hasLinkedFields: !!matchedMain.linked_custom_fields,
       linkedFieldsCount: matchedMain.linked_custom_fields?.length || 0
     });
@@ -682,14 +715,15 @@ function TreePanel({
       custom_field_id: fieldDef.id,
     };
 
-    if (matchedMain.value_id) {
-      const valueId =
-        typeof matchedMain.value_id === 'string'
+    // Используем ID из узла, если он есть, иначе из matchedMain
+    const valueId = nodeValueId || (matchedMain.value_id
+      ? (typeof matchedMain.value_id === 'string'
           ? matchedMain.value_id.trim()
-          : String(matchedMain.value_id);
-      if (valueId) {
-        item.custom_field_value_id = valueId;
-      }
+          : String(matchedMain.value_id))
+      : null);
+    
+    if (valueId) {
+      item.custom_field_value_id = valueId;
     }
 
     // Если у основного значения есть прилинкованные поля, переносим ИМЕННО те,

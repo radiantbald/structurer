@@ -6,7 +6,7 @@ import { convertCustomFieldsObjectToArray } from '../utils/customFields';
 
 const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:8080/api';
 
-function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, initialName, deletedCustomField }) {
+function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, initialName, deletedCustomField, treeStructure }) {
   const [position, setPosition] = useState(null);
   const [customFields, setCustomFields] = useState([]);
   const [isEditing, setIsEditing] = useState(false);
@@ -247,6 +247,7 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
         onCancel={handleCancel}
         onSave={handleSave}
         onDelete={handleDelete}
+        treeStructure={treeStructure}
       />
     </div>
   );

@@ -187,6 +187,7 @@ type TreeNode struct {
 	CustomFieldID   *string    `json:"custom_field_id,omitempty"`
 	CustomFieldKey  *string    `json:"custom_field_key,omitempty"`
 	CustomFieldValue *string   `json:"custom_field_value,omitempty"`
+	CustomFieldValueID *string `json:"custom_field_value_id,omitempty"` // ID значения кастомного поля для точного сопоставления
 	LinkedCustomFields []LinkedCustomField `json:"linked_custom_fields,omitempty"`
 	PositionID      *string    `json:"position_id,omitempty"`
 	PositionName    *string    `json:"position_name,omitempty"`

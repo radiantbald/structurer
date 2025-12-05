@@ -11,7 +11,8 @@ function PositionForm({
   onEdit,
   onCancel,
   onSave,
-  onDelete
+  onDelete,
+  treeStructure
 }) {
   const [formData, setFormData] = useState({
     name: '',
@@ -113,6 +114,43 @@ function PositionForm({
     }
 
     return matched.value ? String(matched.value).trim() : raw;
+  };
+
+  // Сортирует кастомные поля по уровням текущего дерева
+  // Поля из текущего дерева идут в порядке уровней, остальные - в конце
+  const sortCustomFieldsByTreeLevels = (customFieldsEntries) => {
+    if (!treeStructure || !treeStructure.levels || !Array.isArray(treeStructure.levels)) {
+      // Если нет дерева или уровней, возвращаем без сортировки
+      return customFieldsEntries;
+    }
+
+    // Создаем карту: custom_field_key -> order
+    const levelOrderMap = new Map();
+    treeStructure.levels
+      .sort((a, b) => (a.order || 0) - (b.order || 0))
+      .forEach((level, index) => {
+        if (level.custom_field_key) {
+          levelOrderMap.set(level.custom_field_key, level.order !== undefined ? level.order : index);
+        }
+      });
+
+    // Разделяем поля на две группы: из дерева и не из дерева
+    const fieldsInTree = [];
+    const fieldsNotInTree = [];
+
+    customFieldsEntries.forEach(([key, value]) => {
+      if (levelOrderMap.has(key)) {
+        fieldsInTree.push({ key, value, order: levelOrderMap.get(key) });
+      } else {
+        fieldsNotInTree.push({ key, value, order: Infinity });
+      }
+    });
+
+    // Сортируем поля из дерева по order
+    fieldsInTree.sort((a, b) => a.order - b.order);
+
+    // Объединяем: сначала поля из дерева, затем остальные
+    return [...fieldsInTree, ...fieldsNotInTree].map(item => [item.key, item.value]);
   };
 
   const adjustTextareaHeight = (textarea) => {
@@ -317,7 +355,7 @@ function PositionForm({
           <div className="position-form-section position-form-section-custom-fields">
             <div className="position-form-section-divider"></div>
             <div className="custom-fields-chips">
-              {Object.entries(formData.custom_fields).map(([key, value]) => {
+              {sortCustomFieldsByTreeLevels(Object.entries(formData.custom_fields)).map(([key, value]) => {
                 const fieldDef = Array.isArray(availableCustomFields)
                   ? availableCustomFields.find(f => f.key === key)
                   : null;
@@ -541,8 +579,25 @@ function PositionForm({
                 }
               });
 
+              // Сортируем поля по уровням дерева
+              // Создаем карту для быстрого поиска полей по ключу
+              const fieldsMap = new Map();
+              fieldsToDisplay.forEach(field => {
+                fieldsMap.set(field.key, field);
+              });
+              
+              // Сортируем ключи полей по уровням дерева
+              const sortedKeys = sortCustomFieldsByTreeLevels(
+                fieldsToDisplay.map(({ key, value }) => [key, value])
+              ).map(([key]) => key);
+              
+              // Восстанавливаем отсортированный массив полей
+              const sortedFieldsToDisplay = sortedKeys
+                .map(key => fieldsMap.get(key))
+                .filter(Boolean);
+
               // Теперь отображаем поля, добавляя linked значения через тире
-              return fieldsToDisplay.map(({ key, value, fieldDef, matchedMain }) => {
+              return sortedFieldsToDisplay.map(({ key, value, fieldDef, matchedMain }) => {
                 // Базовое отображаемое значение (с учётом того, что в состоянии может храниться value_id)
                 let displayValue = getDisplayValueForCustomField(key, value);
                 

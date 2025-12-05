@@ -65,6 +65,31 @@ export function convertCustomFieldsObjectToArray(customFieldsObj, customFieldsDe
       return; // Неизвестное поле — пропускаем
     }
 
+    // Собираем все выбранные linked_custom_field_value_id из других полей,
+    // которые могут быть связаны с текущим полем через linked_custom_fields
+    // Это нужно для правильного выбора custom_field_value_id, который связан с этими значениями
+    const selectedLinkedValueIdsByField = new Map(); // field_id -> Set of value_ids
+    Object.entries(customFieldsObj).forEach(([otherFieldKey, otherFieldValueRaw]) => {
+      if (otherFieldKey === fieldKey) return; // Пропускаем текущее поле
+      
+      const otherFieldValue = String(otherFieldValueRaw || '').trim();
+      if (!otherFieldValue) return;
+      
+      // Находим определение другого поля
+      const otherFieldDef = defs.find((f) => f && f.key === otherFieldKey);
+      if (!otherFieldDef) return;
+      
+      // Проверяем, является ли значение UUID (linked_custom_field_value_id или custom_field_value_id)
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(otherFieldValue);
+      if (isUUID) {
+        // Сохраняем как потенциально связанное значение
+        if (!selectedLinkedValueIdsByField.has(otherFieldDef.id)) {
+          selectedLinkedValueIdsByField.set(otherFieldDef.id, new Set());
+        }
+        selectedLinkedValueIdsByField.get(otherFieldDef.id).add(otherFieldValue.toLowerCase());
+      }
+    });
+
     let selectedValue = null;
     if (Array.isArray(fieldDef.allowed_values)) {
       const searchValue = mainValueFromRaw.trim();
@@ -88,9 +113,72 @@ export function convertCustomFieldsObjectToArray(customFieldsObj, customFieldsDe
       }
       
       // Если не нашли по UUID или это не UUID, ищем по тексту
+      // ВАЖНО: если есть выбранные linked_custom_field_value_id, выбираем значение,
+      // которое имеет эти значения в своих linked_custom_fields
       if (!selectedValue) {
+        // Функция для проверки, содержит ли значение нужные linked_custom_field_value_id
+        const hasMatchingLinkedValues = (av) => {
+          if (!av || !Array.isArray(av.linked_custom_fields)) {
+            // Если у значения нет linked_custom_fields, но есть выбранные linked значения,
+            // то это значение не подходит
+            return selectedLinkedValueIdsByField.size === 0;
+          }
+          
+          // Если нет выбранных linked значений, подходит любое значение
+          if (selectedLinkedValueIdsByField.size === 0) {
+            return true;
+          }
+          
+          // Проверяем, что для каждого выбранного linked поля есть соответствующее значение
+          for (const [selectedFieldId, selectedValueIds] of selectedLinkedValueIdsByField) {
+            // Находим linked_custom_field для этого поля
+            const matchingLinkedField = av.linked_custom_fields.find((lf) => {
+              if (!lf || !lf.linked_custom_field_id) return false;
+              const linkedFieldId = typeof lf.linked_custom_field_id === 'string'
+                ? lf.linked_custom_field_id.trim().toLowerCase()
+                : String(lf.linked_custom_field_id).trim().toLowerCase();
+              const selectedFieldIdStr = typeof selectedFieldId === 'string'
+                ? selectedFieldId.trim().toLowerCase()
+                : String(selectedFieldId).trim().toLowerCase();
+              return linkedFieldId === selectedFieldIdStr;
+            });
+            
+            if (!matchingLinkedField) {
+              // Если для выбранного поля нет linked_custom_field, это значение не подходит
+              return false;
+            }
+            
+            // Проверяем, что выбранные значения присутствуют в linked_custom_field_values
+            if (!Array.isArray(matchingLinkedField.linked_custom_field_values)) {
+              return false;
+            }
+            
+            const valueLinkedIds = new Set();
+            matchingLinkedField.linked_custom_field_values.forEach((linkedVal) => {
+              if (linkedVal && linkedVal.linked_custom_field_value_id) {
+                const linkedId = typeof linkedVal.linked_custom_field_value_id === 'string'
+                  ? linkedVal.linked_custom_field_value_id.trim().toLowerCase()
+                  : String(linkedVal.linked_custom_field_value_id).trim().toLowerCase();
+                if (linkedId) {
+                  valueLinkedIds.add(linkedId);
+                }
+              }
+            });
+            
+            // Проверяем, что все выбранные значения для этого поля присутствуют
+            for (const selectedId of selectedValueIds) {
+              if (!valueLinkedIds.has(selectedId)) {
+                return false; // Не все выбранные значения присутствуют
+              }
+            }
+          }
+          
+          return true;
+        };
+
         // Сначала пытаемся найти по точному совпадению значения или value_id
-        selectedValue = fieldDef.allowed_values.find((av) => {
+        // И проверяем соответствие linked_custom_field_value_id
+        const candidates = fieldDef.allowed_values.filter((av) => {
           if (!av) return false;
 
           const valueStr = av.value ? String(av.value).trim() : '';
@@ -100,13 +188,22 @@ export function convertCustomFieldsObjectToArray(customFieldsObj, customFieldsDe
                 : String(av.value_id))
             : '';
 
-          return valueStr === searchValue || idStr === searchValue;
+          const matchesTextOrId = valueStr === searchValue || idStr === searchValue;
+          if (!matchesTextOrId) return false;
+          
+          // Если совпадает по тексту/ID, проверяем linked_custom_field_value_id
+          return hasMatchingLinkedValues(av);
         });
+        
+        if (candidates.length > 0) {
+          // Если нашли несколько кандидатов, выбираем первый (они все должны быть эквивалентны)
+          selectedValue = candidates[0];
+        }
 
         // Если не нашли по точному совпадению, пробуем более мягкий поиск по подстроке
         // Но только если основное значение достаточно длинное, чтобы избежать ложных совпадений
         if (!selectedValue && searchValue && searchValue.length >= 3) {
-          selectedValue = fieldDef.allowed_values.find((av) => {
+          const softCandidates = fieldDef.allowed_values.filter((av) => {
             if (!av) return false;
             const valueStr = av.value ? String(av.value).trim() : '';
             // Используем более строгое условие: одно должно содержать другое
@@ -117,11 +214,19 @@ export function convertCustomFieldsObjectToArray(customFieldsObj, customFieldsDe
                 // Проверяем, что длины достаточно похожи (хотя бы 70% совпадения)
                 const minLen = Math.min(valueStr.length, searchValue.length);
                 const maxLen = Math.max(valueStr.length, searchValue.length);
-                return minLen / maxLen >= 0.7;
+                const lengthMatch = minLen / maxLen >= 0.7;
+                if (lengthMatch) {
+                  // Проверяем linked_custom_field_value_id
+                  return hasMatchingLinkedValues(av);
+                }
               }
             }
             return false;
           });
+          
+          if (softCandidates.length > 0) {
+            selectedValue = softCandidates[0];
+          }
         }
       }
     }

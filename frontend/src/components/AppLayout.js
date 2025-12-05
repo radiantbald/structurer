@@ -392,6 +392,7 @@ function AppLayout() {
                 initialPath={initialPath}
                 initialName={initialName}
                 deletedCustomField={deletedCustomField}
+                treeStructure={treeStructure}
               />
             )
           }
