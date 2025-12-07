@@ -739,13 +739,22 @@ func (h *Handler) buildCustomFieldsArrayFromIDs(customFieldsIDs *UUIDArray, cust
 		valueText := valueInfoMap[valueID]
 
 		// Build linked custom fields structure from custom_fields_values
+		// Also load superior information (superior position ID and employee full name)
 		var linkedCustomFieldIDsJSON []byte
 		var linkedCustomFieldValueIDsJSON []byte
+		var superior sql.NullInt64
+		var superiorSurname sql.NullString
+		var superiorEmployeeName sql.NullString
+		var superiorPatronymic sql.NullString
 		err := h.db.QueryRow(
-			`SELECT linked_custom_fields_ids, linked_custom_fields_values_ids
-			FROM custom_fields_values WHERE id = $1`,
+			`SELECT cfv.linked_custom_fields_ids, cfv.linked_custom_fields_values_ids, 
+			        cfv.superior, p.employee_surname, p.employee_name, p.employee_patronymic
+			FROM custom_fields_values cfv
+			LEFT JOIN positions p ON cfv.superior = p.id
+			WHERE cfv.id = $1`,
 			valueID,
-		).Scan(&linkedCustomFieldIDsJSON, &linkedCustomFieldValueIDsJSON)
+		).Scan(&linkedCustomFieldIDsJSON, &linkedCustomFieldValueIDsJSON, 
+			&superior, &superiorSurname, &superiorEmployeeName, &superiorPatronymic)
 
 		var linkedFields []LinkedCustomField
 		if err == nil {
@@ -759,12 +768,39 @@ func (h *Handler) buildCustomFieldsArrayFromIDs(customFieldsIDs *UUIDArray, cust
 			)
 		}
 
+		// Build superior employee full name if superior exists
+		var superiorEmployeeFullName *string
+		if superior.Valid && (superiorSurname.Valid || superiorEmployeeName.Valid || superiorPatronymic.Valid) {
+			var surnamePtr, employeeNamePtr, patronymicPtr *string
+			if superiorSurname.Valid {
+				surnamePtr = &superiorSurname.String
+			}
+			if superiorEmployeeName.Valid {
+				employeeNamePtr = &superiorEmployeeName.String
+			}
+			if superiorPatronymic.Valid {
+				patronymicPtr = &superiorPatronymic.String
+			}
+			fullName := combineEmployeeFullName(surnamePtr, employeeNamePtr, patronymicPtr)
+			if fullName != nil && *fullName != "" {
+				superiorEmployeeFullName = fullName
+			}
+		}
+
+		// Extract superior position ID
+		var superiorID *int64
+		if superior.Valid {
+			superiorID = &superior.Int64
+		}
+
 		valueItem := PositionCustomFieldValue{
-			CustomFieldID:      fieldDef.ID.String(),
-			CustomFieldKey:     fieldDef.Key,
-			CustomFieldLabel:   fieldDef.Label,
-			CustomFieldValue:   valueText,
-			CustomFieldValueID: valueID,
+			CustomFieldID:           fieldDef.ID.String(),
+			CustomFieldKey:          fieldDef.Key,
+			CustomFieldLabel:        fieldDef.Label,
+			CustomFieldValue:        valueText,
+			CustomFieldValueID:      valueID,
+			Superior:                superiorID,
+			SuperiorEmployeeFullName: superiorEmployeeFullName,
 		}
 		if len(linkedFields) > 0 {
 			valueItem.LinkedCustomFields = linkedFields

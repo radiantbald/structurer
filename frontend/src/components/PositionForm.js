@@ -14,7 +14,8 @@ function PositionForm({
   onSave,
   onDelete,
   treeStructure,
-  isDataReady = true
+  isDataReady = true,
+  onPositionSelect
 }) {
   const [formData, setFormData] = useState({
     name: '',
@@ -43,6 +44,16 @@ function PositionForm({
   const combineFullName = (last, first, middle) => {
     const parts = [last, first, middle].filter(part => part && part.trim());
     return parts.join(' ') || '';
+  };
+
+  // Функция для проверки, является ли должность вакантной
+  const isVacant = () => {
+    const fullName = combineFullName(
+      formData.employee_last_name,
+      formData.employee_first_name,
+      formData.employee_middle_name
+    );
+    return !fullName || !fullName.trim();
   };
 
   const [availableCustomFields, setAvailableCustomFields] = useState([]);
@@ -380,8 +391,14 @@ function PositionForm({
 
   useEffect(() => {
     // Проверяем, перенесся ли блок ссылки на профиль на новую строку
+    // Не выполняем проверку для вакантных должностей
+    if (isVacant() || !isEditing) {
+      setIsProfileLinkWrapped(false);
+      return;
+    }
+    
     const checkWrap = () => {
-      if (!combinedFieldRef.current || !profileLinkRef.current || !isEditing) {
+      if (!combinedFieldRef.current || !profileLinkRef.current) {
         setIsProfileLinkWrapped(false);
         return;
       }
@@ -427,7 +444,7 @@ function PositionForm({
       resizeObserver.disconnect();
       clearTimeout(timeoutId);
     };
-  }, [isEditing, formData.employee_id, formData.employee_profile_url]);
+  }, [isEditing, formData.employee_id, formData.employee_profile_url, formData.employee_last_name, formData.employee_first_name, formData.employee_middle_name]);
 
   const handleChange = (field, value) => {
     setFormData(prev => ({
@@ -540,46 +557,48 @@ function PositionForm({
                 <span className="vacant-text">Вакант</span>
               )}
             </div>
-            <div className="form-field form-field-inline form-field-combined">
-              <div 
-                className={`eid-clickable ${formData.employee_id ? '' : 'eid-disabled'}`}
-                onClick={formData.employee_id ? handleCopyEID : undefined}
-                style={formData.employee_id ? { cursor: 'pointer' } : {}}
-                title={formData.employee_id ? 'Копировать EID' : ''}
-              >
-                <label>EID </label>
-                <span>{formData.employee_id || <em>Не указано</em>}</span>
-                {formData.employee_id && (
-                  <span className="copy-eid-icon">
-                    {eidCopied ? (
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z" fill="currentColor"/>
+            {!isVacant() && (
+              <div className="form-field form-field-inline form-field-combined">
+                <div 
+                  className={`eid-clickable ${formData.employee_id ? '' : 'eid-disabled'}`}
+                  onClick={formData.employee_id ? handleCopyEID : undefined}
+                  style={formData.employee_id ? { cursor: 'pointer' } : {}}
+                  title={formData.employee_id ? 'Копировать EID' : ''}
+                >
+                  <label>EID </label>
+                  <span>{formData.employee_id || <em>Не указано</em>}</span>
+                  {formData.employee_id && (
+                    <span className="copy-eid-icon">
+                      {eidCopied ? (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z" fill="currentColor"/>
+                        </svg>
+                      ) : (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M16 1H4C2.9 1 2 1.9 2 3V17H4V3H16V1ZM19 5H8C6.9 5 6 5.9 6 7V21C6 22.1 6.9 23 8 23H19C20.1 23 21 22.1 21 21V7C21 5.9 20.1 5 19 5ZM19 21H8V7H19V21Z" fill="currentColor"/>
+                        </svg>
+                      )}
+                    </span>
+                  )}
+                </div>
+                <span className="field-separator">|</span>
+                <div>
+                  {formData.employee_profile_url ? (
+                    <a href={formData.employee_profile_url} target="_blank" rel="noopener noreferrer" title={formData.employee_profile_url} className="profile-link-wrapper">
+                      <label>Ссылка на профиль</label>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="external-link-icon">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                       </svg>
-                    ) : (
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M16 1H4C2.9 1 2 1.9 2 3V17H4V3H16V1ZM19 5H8C6.9 5 6 5.9 6 7V21C6 22.1 6.9 23 8 23H19C20.1 23 21 22.1 21 21V7C21 5.9 20.1 5 19 5ZM19 21H8V7H19V21Z" fill="currentColor"/>
-                      </svg>
-                    )}
-                  </span>
-                )}
+                    </a>
+                  ) : (
+                    <>
+                      <label>Ссылка на профиль</label>
+                      <span><em>Не указано</em></span>
+                    </>
+                  )}
+                </div>
               </div>
-              <span className="field-separator">|</span>
-              <div>
-                {formData.employee_profile_url ? (
-                  <a href={formData.employee_profile_url} target="_blank" rel="noopener noreferrer" title={formData.employee_profile_url} className="profile-link-wrapper">
-                    <label>Ссылка на профиль</label>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="external-link-icon">
-                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                  </a>
-                ) : (
-                  <>
-                    <label>Ссылка на профиль</label>
-                    <span><em>Не указано</em></span>
-                  </>
-                )}
-              </div>
-            </div>
+            )}
           </div>
           <div className="position-form-actions">
             <button className="btn btn-icon-ghost" onClick={onEdit} title="Редактировать">
@@ -591,54 +610,124 @@ function PositionForm({
         {isDataReady && Object.keys(formData.custom_fields).length > 0 && (
           <div className="position-form-section position-form-section-custom-fields">
             <div className="position-form-section-divider"></div>
-            <div className="custom-fields-chips">
-              {sortCustomFields(Object.entries(formData.custom_fields)).map(([key, value]) => {
-                const fieldDef = Array.isArray(availableCustomFields)
-                  ? availableCustomFields.find(f => f.key === key)
-                  : null;
-                // Базовое отображаемое значение (с учётом того, что в состоянии может храниться value_id)
-                let displayValue = getDisplayValueForCustomField(key, value);
-                
-                // If we have the array format, find linked values for this field
-                if (Array.isArray(customFieldsArray)) {
-                  const fieldItem = customFieldsArray.find(item => item.custom_field_key === key);
-                  if (fieldItem) {
-                    // Используем значение из массива позиции (custom_field_value),
-                    // чтобы гарантировать соответствие тому, что вернул бэкенд.
-                    const mainFromArray = fieldItem.custom_field_value
-                      ? String(fieldItem.custom_field_value).trim()
-                      : '';
-                    if (mainFromArray) {
-                      displayValue = mainFromArray;
-                    }
+            <table className="custom-fields-table">
+              <tbody>
+                {(() => {
+                  // В режиме просмотра фильтруем поля, оставляя только те, что есть в текущем дереве
+                  let fieldsToShow = Object.entries(formData.custom_fields);
+                  
+                  if (treeStructure && treeStructure.levels && Array.isArray(treeStructure.levels)) {
+                    // Создаем множество ключей полей, которые есть в дереве
+                    const treeFieldKeys = new Set();
+                    treeStructure.levels.forEach((level) => {
+                      if (level.custom_field_key) {
+                        treeFieldKeys.add(level.custom_field_key);
+                      }
+                    });
                     
-                    // Добавляем привязанные значения, если они есть
-                    if (fieldItem.linked_custom_fields && Array.isArray(fieldItem.linked_custom_fields)) {
-                      const linkedValues = [];
-                      fieldItem.linked_custom_fields.forEach(linkedField => {
-                        if (linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
-                          linkedField.linked_custom_field_values.forEach(linkedVal => {
-                            if (linkedVal && linkedVal.linked_custom_field_value) {
-                              linkedValues.push(String(linkedVal.linked_custom_field_value).trim());
-                            }
-                          });
+                    // Фильтруем поля, оставляя только те, что есть в дереве
+                    fieldsToShow = fieldsToShow.filter(([key]) => treeFieldKeys.has(key));
+                  }
+                  
+                  // Сортируем поля
+                  const sortedFields = sortCustomFields(fieldsToShow);
+                  
+                  return sortedFields.map(([key, value]) => {
+                  const fieldDef = Array.isArray(availableCustomFields)
+                    ? availableCustomFields.find(f => f.key === key)
+                    : null;
+                  // Базовое отображаемое значение (с учётом того, что в состоянии может храниться value_id)
+                  let displayValue = getDisplayValueForCustomField(key, value);
+                  let superiorName = null;
+                  let superiorPositionId = null;
+                  
+                  // If we have the array format, find linked values for this field
+                  if (Array.isArray(customFieldsArray)) {
+                    const fieldItem = customFieldsArray.find(item => item.custom_field_key === key);
+                    if (fieldItem) {
+                      // Используем значение из массива позиции (custom_field_value),
+                      // чтобы гарантировать соответствие тому, что вернул бэкенд.
+                      const mainFromArray = fieldItem.custom_field_value
+                        ? String(fieldItem.custom_field_value).trim()
+                        : '';
+                      if (mainFromArray) {
+                        displayValue = mainFromArray;
+                      }
+                      
+                      // Добавляем привязанные значения, если они есть
+                      if (fieldItem.linked_custom_fields && Array.isArray(fieldItem.linked_custom_fields)) {
+                        const linkedValues = [];
+                        fieldItem.linked_custom_fields.forEach(linkedField => {
+                          if (linkedField.linked_custom_field_values && Array.isArray(linkedField.linked_custom_field_values)) {
+                            linkedField.linked_custom_field_values.forEach(linkedVal => {
+                              if (linkedVal && linkedVal.linked_custom_field_value) {
+                                linkedValues.push(String(linkedVal.linked_custom_field_value).trim());
+                              }
+                            });
+                          }
+                        });
+                        if (linkedValues.length > 0) {
+                          displayValue = `${displayValue} - ${linkedValues.join(' - ')}`;
                         }
-                      });
-                      if (linkedValues.length > 0) {
-                        displayValue = `${displayValue} - ${linkedValues.join(' - ')}`;
+                      }
+                      
+                      // Извлекаем ФИО начальника отдельно для второго столбца
+                      if (fieldItem.superior_employee_full_name) {
+                        superiorName = String(fieldItem.superior_employee_full_name).trim();
+                      }
+                      // Извлекаем ID позиции начальника для открытия карточки
+                      if (fieldItem.superior != null && fieldItem.superior !== undefined) {
+                        if (typeof fieldItem.superior === 'number') {
+                          superiorPositionId = fieldItem.superior;
+                        } else {
+                          const parsed = parseInt(fieldItem.superior, 10);
+                          if (!isNaN(parsed)) {
+                            superiorPositionId = parsed;
+                          }
+                        }
                       }
                     }
                   }
-                }
-                
-                return (
-                  <span key={key} className="custom-field-chip">
-                    <span className="custom-field-chip-label">{fieldDef ? fieldDef.label : key}:</span>
-                    <span className="custom-field-chip-value">{displayValue}</span>
-                  </span>
-                );
-              })}
-            </div>
+                  
+                  const handleSuperiorClick = (e) => {
+                    e.preventDefault();
+                    if (superiorPositionId && onPositionSelect) {
+                      onPositionSelect(superiorPositionId, null);
+                    }
+                  };
+                  
+                  const fieldLabel = fieldDef ? fieldDef.label : key;
+                  
+                  return (
+                    <tr key={key} className="custom-field-row">
+                      <td className="custom-field-label-cell">
+                        <span 
+                          className="custom-field-value" 
+                          data-tooltip={fieldLabel}
+                        >
+                          {displayValue}
+                        </span>
+                      </td>
+                      <td className="custom-field-superior-cell">
+                        {superiorName ? (
+                          <button
+                            type="button"
+                            className="custom-field-superior-link"
+                            onClick={handleSuperiorClick}
+                            disabled={!superiorPositionId || !onPositionSelect}
+                          >
+                            {superiorName}
+                          </button>
+                        ) : (
+                          <span className="custom-field-superior-empty">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                });
+                })()}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
@@ -689,25 +778,27 @@ function PositionForm({
               />
             </div>
           </div>
-          <div ref={combinedFieldRef} className="form-field form-field-inline form-field-combined">
-            <div className="form-field form-field-inline">
-              <label>EID </label>
-              <input
-                type="text"
-                value={formData.employee_id}
-                onChange={(e) => handleChange('employee_id', e.target.value)}
-              />
+          {!isVacant() && (
+            <div ref={combinedFieldRef} className="form-field form-field-inline form-field-combined">
+              <div className="form-field form-field-inline">
+                <label>EID </label>
+                <input
+                  type="text"
+                  value={formData.employee_id}
+                  onChange={(e) => handleChange('employee_id', e.target.value)}
+                />
+              </div>
+              <span className={`field-separator ${isProfileLinkWrapped ? 'field-separator-hidden' : ''}`}>|</span>
+              <div ref={profileLinkRef} className="form-field form-field-inline form-field-profile-link">
+                <label>Ссылка на профиль</label>
+                <input
+                  type="url"
+                  value={formData.employee_profile_url}
+                  onChange={(e) => handleChange('employee_profile_url', e.target.value)}
+                />
+              </div>
             </div>
-            <span className={`field-separator ${isProfileLinkWrapped ? 'field-separator-hidden' : ''}`}>|</span>
-            <div ref={profileLinkRef} className="form-field form-field-inline form-field-profile-link">
-              <label>Ссылка на профиль</label>
-              <input
-                type="url"
-                value={formData.employee_profile_url}
-                onChange={(e) => handleChange('employee_profile_url', e.target.value)}
-              />
-            </div>
-          </div>
+          )}
         </div>
         <div className="position-form-actions position-form-actions-vertical">
           <button type="button" className="btn btn-icon-ghost" onClick={onCancel} title="Отмена">

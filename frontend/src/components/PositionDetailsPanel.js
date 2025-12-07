@@ -57,7 +57,7 @@ function calculateCustomFieldsOrder(customFieldsObj, treeStructure) {
   return fieldKeys;
 }
 
-function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, initialName, deletedCustomField, treeStructure, customFields: customFieldsProp }) {
+function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, initialName, deletedCustomField, treeStructure, customFields: customFieldsProp, onPositionSelect }) {
   // Восстанавливаем position из кеша при монтировании, если positionId совпадает
   const [position, setPosition] = useState(() => {
     if (positionId) {
@@ -535,6 +535,7 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
         onDelete={handleDelete}
         treeStructure={treeStructure}
         isDataReady={isDataReady}
+        onPositionSelect={onPositionSelect}
       />
     </div>
   );

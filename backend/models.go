@@ -137,6 +137,7 @@ type CustomFieldValue struct {
 	LinkedCustomFields      LinkedCustomFieldsArray `json:"linked_custom_fields" db:"linked_custom_fields"`
 	LinkedCustomFieldIDs    *UUIDArray              `json:"-" db:"linked_custom_fields_ids"` // Stored in DB
 	LinkedCustomFieldValueIDs *UUIDArray            `json:"-" db:"linked_custom_fields_values_ids"` // Stored in DB
+	Superior                *int64                 `json:"superior,omitempty" db:"superior"` // ID должности-начальника
 	CreatedAt               time.Time              `json:"created_at" db:"created_at"`
 	UpdatedAt               time.Time              `json:"updated_at" db:"updated_at"`
 }
@@ -191,6 +192,7 @@ type TreeNode struct {
 	CustomFieldValue *string   `json:"custom_field_value,omitempty"`
 	CustomFieldValueID *string `json:"custom_field_value_id,omitempty"` // ID значения кастомного поля для точного сопоставления
 	LinkedCustomFields []LinkedCustomField `json:"linked_custom_fields,omitempty"`
+	Superior          *int64    `json:"superior,omitempty"` // ID должности-начальника
 	PositionID      *string    `json:"position_id,omitempty"`
 	PositionName    *string    `json:"position_name,omitempty"`
 	EmployeeFullName *string   `json:"employee_full_name,omitempty"`
@@ -199,12 +201,14 @@ type TreeNode struct {
 
 // PositionCustomFieldValue represents a custom field value in position response
 type PositionCustomFieldValue struct {
-	CustomFieldID      string              `json:"custom_field_id"`
-	CustomFieldKey     string              `json:"custom_field_key"`
-	CustomFieldLabel   string              `json:"custom_field_label"`
-	CustomFieldValue   string              `json:"custom_field_value"`
-	CustomFieldValueID uuid.UUID           `json:"custom_field_value_id"`
-	LinkedCustomFields []LinkedCustomField `json:"linked_custom_fields,omitempty"`
+	CustomFieldID           string              `json:"custom_field_id"`
+	CustomFieldKey          string              `json:"custom_field_key"`
+	CustomFieldLabel        string              `json:"custom_field_label"`
+	CustomFieldValue        string              `json:"custom_field_value"`
+	CustomFieldValueID      uuid.UUID           `json:"custom_field_value_id"`
+	LinkedCustomFields      []LinkedCustomField `json:"linked_custom_fields,omitempty"`
+	Superior                *int64              `json:"superior,omitempty"` // ID должности-начальника
+	SuperiorEmployeeFullName *string            `json:"superior_employee_full_name,omitempty"` // ФИО начальника этого custom_field_value
 }
 
 // JSONB is a helper type for JSONB columns

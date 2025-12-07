@@ -395,6 +395,48 @@ function AppLayout() {
                 node={selectedNode}
                 onPositionSelect={handlePositionSelect}
                 onNodeSelect={handleNodeSelect}
+                onSuperiorUpdated={(newSuperiorId) => {
+                  // Обновляем локально selectedNode для мгновенной реакции
+                  if (selectedNode && selectedNode.custom_field_value_id) {
+                    const updatedNode = {
+                      ...selectedNode,
+                      superior: newSuperiorId
+                    };
+                    setSelectedNode(updatedNode);
+                    
+                    // Обновляем узел в дереве локально для мгновенной реакции
+                    if (treeStructure && treeStructure.root) {
+                      const updateNodeInTree = (node, valueId, superior) => {
+                        if (!node) return false;
+                        
+                        if (node.custom_field_value_id === valueId) {
+                          node.superior = superior;
+                          return true;
+                        }
+                        
+                        if (node.children) {
+                          for (const child of node.children) {
+                            if (updateNodeInTree(child, valueId, superior)) {
+                              return true;
+                            }
+                          }
+                        }
+                        
+                        return false;
+                      };
+                      
+                      const valueId = selectedNode.custom_field_value_id;
+                      if (valueId) {
+                        const treeCopy = JSON.parse(JSON.stringify(treeStructure));
+                        updateNodeInTree(treeCopy.root, valueId, newSuperiorId);
+                        setTreeStructure(treeCopy);
+                        handleTreeStructureChange(treeCopy);
+                      }
+                    }
+                  }
+                  // Обновляем дерево для синхронизации с сервером
+                  setRefreshTrigger(prev => prev + 1);
+                }}
               />
             ) : (
               <PositionDetailsPanel
@@ -406,6 +448,7 @@ function AppLayout() {
                 deletedCustomField={deletedCustomField}
                 treeStructure={treeStructure}
                 customFields={customFields}
+                onPositionSelect={handlePositionSelect}
               />
             )
           }

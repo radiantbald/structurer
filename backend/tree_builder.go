@@ -213,6 +213,9 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 	// Load custom field definitions to check for linked fields
 	fieldDefsByKey := loadCustomFieldDefinitions(db)
 
+	// Pre-load superior information for all custom_field_values
+	superiorMap := loadSuperiorMap(db)
+
 	// Create a map of tree level field keys for quick lookup
 	treeLevelFieldKeys := make(map[string]bool)
 	for _, level := range tree.Levels {
@@ -220,7 +223,7 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 	}
 
 	// Build structured part of the tree recursively на основе только структурированных позиций.
-	structuredChildren := buildTreeLevel(structuredPositions, tree.Levels, 0, nil, fieldDefsByKey, treeLevelFieldKeys)
+	structuredChildren := buildTreeLevel(structuredPositions, tree.Levels, 0, nil, fieldDefsByKey, treeLevelFieldKeys, superiorMap)
 
 	// Collect positions that don't participate in the tree at all (no values for any tree level keys)
 	unstructuredPositions := make([]struct {
@@ -379,7 +382,7 @@ func buildTreeLevel(positions []struct {
 	CustomFields       map[string]string
 	CustomFieldDetails map[string]PositionCustomFieldValue
 	EmployeeFullName   *string
-}, levels []TreeLevel, levelIndex int, path map[string]string, fieldDefsByKey map[string]CustomFieldDefinition, treeLevelFieldKeys map[string]bool) []TreeNode {
+}, levels []TreeLevel, levelIndex int, path map[string]string, fieldDefsByKey map[string]CustomFieldDefinition, treeLevelFieldKeys map[string]bool, superiorMap map[uuid.UUID]*int64) []TreeNode {
 	if levelIndex >= len(levels) {
 		// Leaf level - return positions
 		var nodes []TreeNode
@@ -611,7 +614,7 @@ func buildTreeLevel(positions []struct {
 				}
 				newPath[fieldKey] = val
 
-				children := buildTreeLevel(groupPositions, levels, levelIndex+1, newPath, fieldDefsByKey, treeLevelFieldKeys)
+				children := buildTreeLevel(groupPositions, levels, levelIndex+1, newPath, fieldDefsByKey, treeLevelFieldKeys, superiorMap)
 
 				// Build linked custom fields и основное значение на основе той же логики,
 				// что и в ручке positions/{id}: берём структуру из CustomFieldDetails.
@@ -657,6 +660,16 @@ func buildTreeLevel(positions []struct {
 					}
 				}
 
+				// Get superior from superiorMap if custom_field_value_id is available
+				var superior *int64
+				if customFieldValueID != nil {
+					if valueID, err := uuid.Parse(*customFieldValueID); err == nil {
+						if sup, ok := superiorMap[valueID]; ok {
+							superior = sup
+						}
+					}
+				}
+
 				nodes = append(nodes, TreeNode{
 					Type:               "custom_field_value",
 					LevelOrder:         &levelOrder,
@@ -665,6 +678,7 @@ func buildTreeLevel(positions []struct {
 					CustomFieldValue:   &originalValue,
 					CustomFieldValueID: customFieldValueID,
 					LinkedCustomFields: linkedFields,
+					Superior:           superior,
 					Children:           children,
 				})
 			}
@@ -677,7 +691,7 @@ func buildTreeLevel(positions []struct {
 				}
 				newPath[fieldKey] = val
 
-				children := buildTreeLevel(positionsWithoutLinkedValue, levels, levelIndex+1, newPath, fieldDefsByKey, treeLevelFieldKeys)
+				children := buildTreeLevel(positionsWithoutLinkedValue, levels, levelIndex+1, newPath, fieldDefsByKey, treeLevelFieldKeys, superiorMap)
 
 				// Build linked custom fields (all linked fields from definition)
 				linkedFields := buildLinkedCustomFields(matchedAllowedValue)
@@ -693,6 +707,16 @@ func buildTreeLevel(positions []struct {
 					customFieldValueID = &valueIDStr
 				}
 
+				// Get superior from superiorMap if custom_field_value_id is available
+				var superior *int64
+				if customFieldValueID != nil {
+					if valueID, err := uuid.Parse(*customFieldValueID); err == nil {
+						if sup, ok := superiorMap[valueID]; ok {
+							superior = sup
+						}
+					}
+				}
+
 				nodes = append(nodes, TreeNode{
 					Type:              "custom_field_value",
 					LevelOrder:         &levelOrder,
@@ -701,6 +725,7 @@ func buildTreeLevel(positions []struct {
 					CustomFieldValue:   &customFieldValue,
 					CustomFieldValueID: customFieldValueID,
 					LinkedCustomFields: linkedFields,
+					Superior:           superior,
 					Children:           children,
 				})
 			}
@@ -737,7 +762,7 @@ func buildTreeLevel(positions []struct {
 				displayValue = matchedAllowedValue.Value
 			}
 
-			children := buildTreeLevel(matchingPositions, levels, levelIndex+1, newPath, fieldDefsByKey, treeLevelFieldKeys)
+			children := buildTreeLevel(matchingPositions, levels, levelIndex+1, newPath, fieldDefsByKey, treeLevelFieldKeys, superiorMap)
 
 			// Build linked custom fields (all linked fields from definition)
 			var linkedFields []LinkedCustomField
@@ -760,6 +785,16 @@ func buildTreeLevel(positions []struct {
 				customFieldValueID = &valueIDStr
 			}
 
+			// Get superior from superiorMap if custom_field_value_id is available
+			var superior *int64
+			if customFieldValueID != nil {
+				if valueID, err := uuid.Parse(*customFieldValueID); err == nil {
+					if sup, ok := superiorMap[valueID]; ok {
+						superior = sup
+					}
+				}
+			}
+
 			nodes = append(nodes, TreeNode{
 				Type:              "custom_field_value",
 				LevelOrder:         &levelOrder,
@@ -768,6 +803,7 @@ func buildTreeLevel(positions []struct {
 				CustomFieldValue:   &displayValue,
 				CustomFieldValueID: customFieldValueID,
 				LinkedCustomFields: linkedFields,
+				Superior:           superior,
 				Children:           children,
 			})
 		}
@@ -825,5 +861,24 @@ func matchesPath(customFields map[string]string, path map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// loadSuperiorMap loads superior information for all custom_field_values
+func loadSuperiorMap(db *sql.DB) map[uuid.UUID]*int64 {
+	superiorMap := make(map[uuid.UUID]*int64)
+	rows, err := db.Query(`SELECT id, superior FROM custom_fields_values WHERE superior IS NOT NULL`)
+	if err != nil {
+		return superiorMap
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var valueID uuid.UUID
+		var superior sql.NullInt64
+		if err := rows.Scan(&valueID, &superior); err == nil && superior.Valid {
+			superiorMap[valueID] = &superior.Int64
+		}
+	}
+	return superiorMap
 }
 

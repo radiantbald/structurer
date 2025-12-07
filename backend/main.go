@@ -67,6 +67,13 @@ func main() {
 	api.HandleFunc("/trees/{id}/structure", h.GetTreeStructure).Methods("GET")
 	api.HandleFunc("/trees/{id}/structure", handleOptions).Methods("OPTIONS")
 
+	// Custom Field Values
+	api.HandleFunc("/custom-field-values/{id}/available-superiors", h.GetAvailableSuperiors).Methods("GET")
+	api.HandleFunc("/custom-field-values/{id}/available-superiors", handleOptions).Methods("OPTIONS")
+	api.HandleFunc("/custom-field-values/{id}/superior", h.GetCustomFieldValueSuperior).Methods("GET")
+	api.HandleFunc("/custom-field-values/{id}/superior", h.UpdateCustomFieldValueSuperior).Methods("PUT")
+	api.HandleFunc("/custom-field-values/{id}/superior", handleOptions).Methods("OPTIONS")
+
 	port := os.Getenv("SERVER_PORT")
 	if port == "" {
 		port = "8080"

@@ -227,6 +227,92 @@
   margin-top: 0;
 }
 
+/* Табличный формат для кастомных полей в режиме просмотра */
+.custom-fields-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+}
+
+.custom-field-row {
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.custom-field-row:last-child {
+  border-bottom: none;
+}
+
+.custom-field-label-cell {
+  padding: 0.75rem 0;
+  vertical-align: top;
+  width: 60%;
+}
+
+.custom-field-value {
+  color: #333;
+  word-break: break-word;
+  cursor: help;
+  position: relative;
+}
+
+.custom-field-value::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 5px;
+  padding: 6px 10px;
+  background-color: #333;
+  color: white;
+  font-size: 0.875rem;
+  white-space: nowrap;
+  border-radius: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s ease-in-out;
+  z-index: 1000;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.custom-field-value:hover::after {
+  opacity: 1;
+}
+
+.custom-field-superior-cell {
+  padding: 0.75rem 0;
+  vertical-align: top;
+  width: 40%;
+  padding-left: 1rem;
+}
+
+.custom-field-superior-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #007bff;
+  cursor: pointer;
+  text-decoration: underline;
+  font-size: inherit;
+  font-family: inherit;
+  transition: color 0.2s;
+}
+
+.custom-field-superior-link:hover:not(:disabled) {
+  color: #0056b3;
+  text-decoration: none;
+}
+
+.custom-field-superior-link:disabled {
+  color: #666;
+  cursor: default;
+  text-decoration: none;
+}
+
+.custom-field-superior-empty {
+  color: #999;
+  font-style: italic;
+}
+
 .position-form-actions {
   display: flex;
   gap: 0.5rem;

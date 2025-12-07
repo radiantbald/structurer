@@ -334,12 +334,34 @@ function TreeNode({ node, level, path, onPositionSelect, onCreateFromNode, onNod
     const hasChildren = node.children && node.children.length > 0;
     
     // Разделяем детей на должности и дочерние узлы
-    const positionChildren = hasChildren 
+    const allPositionChildren = hasChildren 
       ? node.children.filter(child => child.type === 'position')
       : [];
     const fieldValueChildren = hasChildren
       ? node.children.filter(child => isFieldValueNode(child))
       : [];
+    
+    // Определяем начальника среди позиций (если у узла есть superior)
+    const superiorId = node.superior != null ? Number(node.superior) : null;
+    const superiorPosition = superiorId != null 
+      ? allPositionChildren.find(pos => {
+          if (!pos.position_id) return false;
+          const posId = Number(pos.position_id);
+          return !isNaN(posId) && posId === superiorId;
+        })
+      : null;
+    const otherPositions = superiorPosition
+      ? allPositionChildren.filter(pos => {
+          if (!pos.position_id) return true;
+          const posId = Number(pos.position_id);
+          return isNaN(posId) || posId !== superiorId;
+        })
+      : allPositionChildren;
+    
+    // Порядок: сначала начальник, затем остальные сотрудники
+    const positionChildren = superiorPosition 
+      ? [superiorPosition, ...otherPositions]
+      : otherPositions;
     
     // Подсчитываем все позиции во всех дочерних уровнях
     const totalPositions = countAllPositions(node);
