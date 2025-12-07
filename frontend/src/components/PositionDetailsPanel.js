@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import PositionForm from './PositionForm';
 import './PositionDetailsPanel.css';
 import { convertCustomFieldsObjectToArray } from '../utils/customFields';
 
 const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:8080/api';
+const POSITION_CACHE_KEY = 'position_cache';
 
 // Вычисляет порядок кастомных полей на основе дерева
 // Поля из дерева идут в порядке уровней, остальные - в конце
@@ -57,13 +58,71 @@ function calculateCustomFieldsOrder(customFieldsObj, treeStructure) {
 }
 
 function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, initialName, deletedCustomField, treeStructure, customFields: customFieldsProp }) {
-  const [position, setPosition] = useState(null);
+  // Восстанавливаем position из кеша при монтировании, если positionId совпадает
+  const [position, setPosition] = useState(() => {
+    if (positionId) {
+      try {
+        const cached = localStorage.getItem(`${POSITION_CACHE_KEY}_${positionId}`);
+        if (cached) {
+          return JSON.parse(cached);
+        }
+      } catch (e) {
+        console.error('Failed to restore position from cache:', e);
+      }
+    }
+    return null;
+  });
   const [customFields, setCustomFields] = useState(customFieldsProp || []);
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [isDataReady, setIsDataReady] = useState(() => {
+    // Если position восстановлен из кеша и customFields готовы, данные готовы
+    if (positionId) {
+      try {
+        const cached = localStorage.getItem(`${POSITION_CACHE_KEY}_${positionId}`);
+        if (cached) {
+          const hasCustomFields = (customFieldsProp && customFieldsProp.length > 0);
+          return hasCustomFields;
+        }
+      } catch (e) {
+        // Игнорируем ошибки при проверке кеша
+      }
+    }
+    return false;
+  });
+  // Используем ref для сохранения предыдущего positionId и предотвращения сброса при обновлении
+  const prevPositionIdRef = useRef(null);
+  const positionRef = useRef(null);
 
   useEffect(() => {
     if (positionId) {
+      // Если positionId изменился, очищаем кеш предыдущего position
+      if (prevPositionIdRef.current && prevPositionIdRef.current !== positionId) {
+        try {
+          localStorage.removeItem(`${POSITION_CACHE_KEY}_${prevPositionIdRef.current}`);
+        } catch (e) {
+          console.error('Failed to clear position cache:', e);
+        }
+      }
+      
+      // Если positionId не изменился и position уже восстановлен из кеша, проверяем готовность данных
+      // Это предотвращает мерцание при обновлении страницы
+      if (prevPositionIdRef.current === positionId && position) {
+        // position уже восстановлен из кеша в useState
+        // Проверяем, готовы ли customFields
+        const hasCustomFields = (customFieldsProp && customFieldsProp.length > 0) || 
+                                 (customFields && customFields.length > 0);
+        if (hasCustomFields) {
+          setIsDataReady(true);
+        } else {
+          setIsDataReady(false);
+        }
+      } else if (prevPositionIdRef.current !== positionId) {
+        // positionId изменился, сбрасываем isDataReady
+        setIsDataReady(false);
+      }
+      
+      prevPositionIdRef.current = positionId;
       loadPosition(positionId);
       setIsEditing(false);
     } else if (positionId === null) {
@@ -72,19 +131,24 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
         // ВАЖНО: Порядок полей вычисляем на основе дерева, а не из initialPath
         // Это гарантирует стабильный порядок
         const calculatedOrder = calculateCustomFieldsOrder(initialPath, treeStructure);
-        setPosition({
+        const newPosition = {
           name: initialName || '',
           custom_fields: initialPath,
           custom_fields_order: calculatedOrder,
           employee_full_name: '',
           employee_id: '',
           employee_profile_url: ''
-        });
+        };
+        setPosition(newPosition);
+        positionRef.current = newPosition;
         setIsEditing(true);
+        setIsDataReady(true);
       } else {
         // New position without path
         setPosition(null);
+        positionRef.current = null;
         setIsEditing(true);
+        setIsDataReady(true);
       }
     }
   }, [positionId, initialPath]);
@@ -93,8 +157,12 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
   useEffect(() => {
     if (customFieldsProp && customFieldsProp.length > 0) {
       setCustomFields(customFieldsProp);
+      // Если данные должности уже загружены, помечаем данные как готовые
+      if (position) {
+        setIsDataReady(true);
+      }
     }
-  }, [customFieldsProp]);
+  }, [customFieldsProp, position]);
 
   useEffect(() => {
     // Load custom fields definitions on mount (needed for new positions)
@@ -146,17 +214,30 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
   }, [deletedCustomField]);
 
   const loadPosition = async (id, silent = false) => {
-    if (!silent) {
+    // Не показываем состояние загрузки при тихой перезагрузке или если уже есть данные
+    // Это предотвращает мерцание при обновлении страницы
+    if (!silent && !position) {
       setLoading(true);
     }
     try {
-      const response = await axios.get(`${API_BASE}/positions/${id}`);
-      const positionData = response.data;
+      // Загружаем position и customFields параллельно для оптимизации
+      const positionPromise = axios.get(`${API_BASE}/positions/${id}`);
+      const customFieldsPromise = (!customFieldsProp || customFieldsProp.length === 0)
+        ? axios.get(`${API_BASE}/custom-fields`)
+        : Promise.resolve({ data: customFieldsProp });
       
-      // Load custom field definitions first (needed for conversion)
-      // Только если не переданы через props
+      // Ждем оба запроса параллельно
+      const [positionResponse, customFieldsResponse] = await Promise.all([
+        positionPromise,
+        customFieldsPromise
+      ]);
+      
+      const positionData = positionResponse.data;
+      
+      // Устанавливаем customFields
       if (!customFieldsProp || customFieldsProp.length === 0) {
-        await loadCustomFields();
+        const fieldsData = customFieldsResponse.data || [];
+        setCustomFields(fieldsData);
       } else {
         setCustomFields(customFieldsProp);
       }
@@ -252,11 +333,30 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
         positionData.custom_fields_order = [];
       }
       
+      // Проверяем готовность customFields перед установкой position
+      const hasCustomFields = (customFieldsProp && customFieldsProp.length > 0) || 
+                               (customFields.length > 0);
+      
+      // Устанавливаем isDataReady синхронно ДО установки position
+      // Это гарантирует, что кастомные поля не будут мерцать
+      if (hasCustomFields) {
+        setIsDataReady(true);
+      }
+      
       // При тихой перезагрузке всегда обновляем состояние, чтобы гарантировать правильный порядок
       // Порядок всегда пересчитывается на основе дерева, что предотвращает перепрыгивание полей
       setPosition(positionData);
+      // Сохраняем position в ref для восстановления при обновлении страницы
+      positionRef.current = positionData;
+      // Сохраняем position в localStorage для восстановления при обновлении страницы
+      try {
+        localStorage.setItem(`${POSITION_CACHE_KEY}_${id}`, JSON.stringify(positionData));
+      } catch (e) {
+        console.error('Failed to cache position:', e);
+      }
     } catch (error) {
       console.error('Failed to load position:', error);
+      setIsDataReady(false);
     } finally {
       setLoading(false);
     }
@@ -265,7 +365,11 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
   const loadCustomFields = async () => {
     try {
       const response = await axios.get(`${API_BASE}/custom-fields`);
-      setCustomFields(response.data);
+      const fieldsData = response.data || [];
+      setCustomFields(fieldsData);
+      // Помечаем данные как готовые после загрузки customFields, если position уже загружен
+      // Это гарантирует, что кастомные поля не будут мерцать
+      // Если position еще не загружен, isDataReady будет установлен в loadPosition
     } catch (error) {
       console.error('Failed to load custom fields:', error);
     }
@@ -337,6 +441,16 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
       
       setIsEditing(false);
       setPosition(optimisticPosition);
+      // Сохраняем position в ref для восстановления при обновлении страницы
+      positionRef.current = optimisticPosition;
+      // Сохраняем position в localStorage для восстановления при обновлении страницы
+      try {
+        localStorage.setItem(`${POSITION_CACHE_KEY}_${savedPositionId}`, JSON.stringify(optimisticPosition));
+      } catch (e) {
+        console.error('Failed to cache position:', e);
+      }
+      // Данные готовы, так как мы только что их сохранили
+      setIsDataReady(true);
       
       if (onSaved) {
         onSaved(savedPositionId);
@@ -368,6 +482,13 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
       await axios.delete(`${API_BASE}/positions/${position.id}`);
       const positionPath = position.custom_fields || {};
       setPosition(null);
+      positionRef.current = null;
+      // Удаляем position из кеша при удалении
+      try {
+        localStorage.removeItem(`${POSITION_CACHE_KEY}_${position.id}`);
+      } catch (e) {
+        console.error('Failed to remove position from cache:', e);
+      }
       setIsEditing(false);
       if (onDeleted) {
         onDeleted(positionPath);
@@ -378,7 +499,9 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
     }
   };
 
-  if (loading) {
+  // Показываем состояние загрузки только если нет предыдущих данных
+  // Это предотвращает мерцание при обновлении страницы
+  if (loading && !position && !isEditing) {
     return (
       <div className="position-details-panel">
         <div className="empty-state">
@@ -411,6 +534,7 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
         onSave={handleSave}
         onDelete={handleDelete}
         treeStructure={treeStructure}
+        isDataReady={isDataReady}
       />
     </div>
   );

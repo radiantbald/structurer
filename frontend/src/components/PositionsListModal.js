@@ -77,7 +77,7 @@ function PositionsListModal({ onClose }) {
                     <th>ID</th>
                     <th>Название</th>
                     <th>Сотрудник</th>
-                    <th>Внешний ID</th>
+                    <th>EID</th>
                     <th>Профиль</th>
                   </tr>
                 </thead>

@@ -18,7 +18,7 @@
   position: sticky;
   top: 0;
   z-index: 1;
-  background-color: #f9fafb;
+  background-color: white;
 }
 
 .position-form-header-content {
@@ -28,6 +28,11 @@
   flex-direction: column;
   gap: 0.25rem;
   overflow: hidden;
+}
+
+.position-form-header-content .form-field-inline {
+  margin-top: 0.25rem;
+  margin-bottom: 0;
 }
 
 .position-form-employee-name {
@@ -103,7 +108,7 @@
   right: 0;
   width: 60px;
   height: calc(1.125rem * 1.4); /* высота одной строки */
-  background: linear-gradient(to right, transparent, #f9fafb);
+  background: linear-gradient(to right, transparent, white);
   pointer-events: none;
 }
 
@@ -366,6 +371,214 @@
   margin-bottom: 0.5rem;
   font-weight: 500;
   color: #555;
+}
+
+.form-field-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  width: fit-content;
+}
+
+.form-field-combined {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.form-field.form-field-inline.form-field-combined {
+  width: 100%;
+}
+
+.form-field-combined > div {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.form-field-combined > div.form-field-profile-link {
+  flex: 1;
+  min-width: 150px;
+  display: flex;
+}
+
+.form-field-combined > div.form-field-profile-link:not(:first-child) {
+  flex-basis: auto;
+}
+
+.form-field-combined > div label {
+  display: inline;
+  margin-bottom: 0;
+  margin-right: 0;
+  flex-shrink: 0;
+  font-weight: normal !important;
+  color: #333 !important;
+  font-size: 0.9rem;
+}
+
+.profile-link-wrapper label {
+  color: #333 !important;
+}
+
+.form-field-combined > div input {
+  flex: 1;
+  min-width: 150px;
+}
+
+.form-field-combined > div.form-field-profile-link input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+.form-field-combined > div a {
+  display: inline-flex;
+  align-items: center;
+  color: inherit;
+  text-decoration: none !important;
+  font-size: 0.9rem;
+  transition: opacity 0.2s;
+  border-bottom: none !important;
+}
+
+.form-field-combined > div a:hover {
+  opacity: 0.7;
+  text-decoration: none !important;
+  border-bottom: none !important;
+}
+
+.form-field-combined > div a:focus {
+  text-decoration: none !important;
+  border-bottom: none !important;
+}
+
+.profile-link-wrapper {
+  cursor: pointer;
+  text-decoration: none !important;
+}
+
+.profile-link-wrapper label {
+  margin-bottom: 0;
+  margin-right: 0;
+  cursor: pointer;
+  text-decoration: none !important;
+}
+
+.external-link-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  opacity: 0.6;
+  flex-shrink: 0;
+  margin-left: 0.4rem;
+  margin-top: 0.1rem;
+  transition: opacity 0.2s, color 0.2s;
+  pointer-events: none;
+  vertical-align: baseline;
+}
+
+.profile-link-wrapper:hover .external-link-icon {
+  opacity: 0.7;
+}
+
+.external-link-icon svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.field-separator {
+  color: #999;
+  font-size: 0.9rem;
+  padding: 0 0.25rem;
+  flex-shrink: 0;
+}
+
+.field-separator-hidden {
+  display: none;
+}
+
+.form-field.form-field-inline label {
+  display: inline;
+  margin-bottom: 0;
+  margin-right: 0;
+  flex-shrink: 0;
+  font-weight: bold !important;
+  color: #666 !important;
+  font-size: 0.9rem;
+}
+
+.form-field.form-field-inline span {
+  display: inline;
+  font-size: 0.9rem;
+  font-weight: bold;
+  color: #666;
+}
+
+.form-field.form-field-inline span em {
+  font-weight: normal;
+  font-style: italic;
+  color: #333;
+}
+
+.eid-clickable {
+  transition: opacity 0.2s;
+}
+
+.eid-clickable:hover:not(.eid-disabled) {
+  opacity: 0.7;
+}
+
+.eid-clickable:active:not(.eid-disabled) {
+  opacity: 0.5;
+}
+
+.eid-disabled {
+  cursor: default;
+}
+
+.copy-eid-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 0.25rem;
+  color: #666;
+  opacity: 0.6;
+  transition: opacity 0.2s, color 0.2s;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
+.eid-clickable:hover:not(.eid-disabled) .copy-eid-icon {
+  opacity: 0.7;
+}
+
+.copy-eid-icon svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.form-field.form-field-inline a {
+  display: inline;
+  word-break: break-all;
+  color: #007bff;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.form-field.form-field-inline a:hover {
+  text-decoration: underline;
+}
+
+.form-field.form-field-inline input {
+  flex: 1;
+  min-width: 0;
 }
 
 .form-field input,

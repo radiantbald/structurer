@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import './PositionForm.css';
 import PositionCustomFieldsModal from './PositionCustomFieldsModal';
 import pencilIcon from '../assets/images/pencil.png';
@@ -13,7 +13,8 @@ function PositionForm({
   onCancel,
   onSave,
   onDelete,
-  treeStructure
+  treeStructure,
+  isDataReady = true
 }) {
   const [formData, setFormData] = useState({
     name: '',
@@ -48,7 +49,19 @@ function PositionForm({
   const [newCustomFieldKey, setNewCustomFieldKey] = useState('');
   const [showCustomFieldsEditor, setShowCustomFieldsEditor] = useState(false);
   const [customFieldsOrderState, setCustomFieldsOrderState] = useState([]);
+  const [eidCopied, setEidCopied] = useState(false);
   const titleInputRef = useRef(null);
+  const combinedFieldRef = useRef(null);
+  const profileLinkRef = useRef(null);
+  const [isProfileLinkWrapped, setIsProfileLinkWrapped] = useState(false);
+
+  // Вычисляем custom_fields только когда данные готовы, чтобы предотвратить мерцание
+  const stableCustomFields = useMemo(() => {
+    if (!position || !isDataReady) {
+      return {};
+    }
+    return position.custom_fields || {};
+  }, [position, isDataReady]);
 
   useEffect(() => {
     if (position) {
@@ -65,17 +78,25 @@ function PositionForm({
         patronymic = nameParts.middle;
       }
       
-      setFormData({
-        name: position.name || '',
-        custom_fields: position.custom_fields || {},
-        employee_last_name: surname,
-        employee_first_name: employeeName,
-        employee_middle_name: patronymic,
-        employee_id: position.employee_id || '',
-        employee_profile_url: position.employee_profile_url || ''
+      setFormData(prev => {
+        // Обновляем custom_fields только если данные готовы, иначе сохраняем предыдущее значение
+        // Это предотвращает мерцание кастомных полей при загрузке
+        const newCustomFields = isDataReady ? stableCustomFields : prev.custom_fields;
+        
+        return {
+          name: position.name || '',
+          custom_fields: newCustomFields,
+          employee_last_name: surname,
+          employee_first_name: employeeName,
+          employee_middle_name: patronymic,
+          employee_id: position.employee_id || '',
+          employee_profile_url: position.employee_profile_url || ''
+        };
       });
-      // Сохраняем порядок полей из позиции
-      setCustomFieldsOrderState(Array.isArray(customFieldsOrder) ? [...customFieldsOrder] : []);
+      // Сохраняем порядок полей из позиции только если данные готовы
+      if (isDataReady) {
+        setCustomFieldsOrderState(Array.isArray(customFieldsOrder) ? [...customFieldsOrder] : []);
+      }
     } else {
       setFormData({
         name: '',
@@ -88,7 +109,7 @@ function PositionForm({
       });
       setCustomFieldsOrderState([]);
     }
-  }, [position, customFieldsOrder]);
+  }, [position, customFieldsOrder, isDataReady, stableCustomFields]);
 
   useEffect(() => {
     // Гарантируем, что availableCustomFields всегда массив,
@@ -357,11 +378,82 @@ function PositionForm({
     }
   }, [formData.name, isEditing]);
 
+  useEffect(() => {
+    // Проверяем, перенесся ли блок ссылки на профиль на новую строку
+    const checkWrap = () => {
+      if (!combinedFieldRef.current || !profileLinkRef.current || !isEditing) {
+        setIsProfileLinkWrapped(false);
+        return;
+      }
+
+      const container = combinedFieldRef.current;
+      const profileLink = profileLinkRef.current;
+      const eidField = container.querySelector('.form-field:not(.form-field-profile-link)');
+      
+      if (!eidField) {
+        setIsProfileLinkWrapped(false);
+        return;
+      }
+
+      const eidRect = eidField.getBoundingClientRect();
+      const profileRect = profileLink.getBoundingClientRect();
+
+      // Проверяем, находится ли блок ссылки на профиль на той же строке, что и EID
+      // Используем небольшую погрешность для учета округлений
+      const tolerance = 5;
+      const isOnSameLine = Math.abs(profileRect.top - eidRect.top) < tolerance;
+      
+      setIsProfileLinkWrapped(!isOnSameLine);
+    };
+
+    // Используем небольшую задержку для правильного расчета после рендера
+    const timeoutId = setTimeout(checkWrap, 100);
+    
+    // Проверяем при изменении размера окна и содержимого
+    window.addEventListener('resize', checkWrap);
+    const resizeObserver = new ResizeObserver(() => {
+      setTimeout(checkWrap, 50);
+    });
+    
+    if (combinedFieldRef.current) {
+      resizeObserver.observe(combinedFieldRef.current);
+    }
+    if (profileLinkRef.current) {
+      resizeObserver.observe(profileLinkRef.current);
+    }
+
+    return () => {
+      window.removeEventListener('resize', checkWrap);
+      resizeObserver.disconnect();
+      clearTimeout(timeoutId);
+    };
+  }, [isEditing, formData.employee_id, formData.employee_profile_url]);
+
   const handleChange = (field, value) => {
     setFormData(prev => ({
       ...prev,
       [field]: value
     }));
+    if (field === 'employee_id') {
+      setEidCopied(false);
+    }
+  };
+
+  const handleCopyEID = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const eidValue = formData.employee_id;
+    if (eidValue) {
+      try {
+        await navigator.clipboard.writeText(eidValue);
+        setEidCopied(true);
+        setTimeout(() => {
+          setEidCopied(false);
+        }, 2000);
+      } catch (err) {
+        console.error('Ошибка при копировании:', err);
+      }
+    }
   };
 
   const handleCustomFieldChange = (key, value) => {
@@ -448,6 +540,46 @@ function PositionForm({
                 <span className="vacant-text">Вакант</span>
               )}
             </div>
+            <div className="form-field form-field-inline form-field-combined">
+              <div 
+                className={`eid-clickable ${formData.employee_id ? '' : 'eid-disabled'}`}
+                onClick={formData.employee_id ? handleCopyEID : undefined}
+                style={formData.employee_id ? { cursor: 'pointer' } : {}}
+                title={formData.employee_id ? 'Копировать EID' : ''}
+              >
+                <label>EID </label>
+                <span>{formData.employee_id || <em>Не указано</em>}</span>
+                {formData.employee_id && (
+                  <span className="copy-eid-icon">
+                    {eidCopied ? (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z" fill="currentColor"/>
+                      </svg>
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M16 1H4C2.9 1 2 1.9 2 3V17H4V3H16V1ZM19 5H8C6.9 5 6 5.9 6 7V21C6 22.1 6.9 23 8 23H19C20.1 23 21 22.1 21 21V7C21 5.9 20.1 5 19 5ZM19 21H8V7H19V21Z" fill="currentColor"/>
+                      </svg>
+                    )}
+                  </span>
+                )}
+              </div>
+              <span className="field-separator">|</span>
+              <div>
+                {formData.employee_profile_url ? (
+                  <a href={formData.employee_profile_url} target="_blank" rel="noopener noreferrer" title={formData.employee_profile_url} className="profile-link-wrapper">
+                    <label>Ссылка на профиль</label>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="external-link-icon">
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </a>
+                ) : (
+                  <>
+                    <label>Ссылка на профиль</label>
+                    <span><em>Не указано</em></span>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
           <div className="position-form-actions">
             <button className="btn btn-icon-ghost" onClick={onEdit} title="Редактировать">
@@ -456,25 +588,7 @@ function PositionForm({
           </div>
         </div>
 
-        <div className="position-form-section">
-          <h3>Сотрудник</h3>
-          <div className="form-field">
-            <label>Внешний ID:</label>
-            <p>{formData.employee_id || <em>Не указано</em>}</p>
-          </div>
-          <div className="form-field">
-            <label>Ссылка на профиль:</label>
-            {formData.employee_profile_url ? (
-              <a href={formData.employee_profile_url} target="_blank" rel="noopener noreferrer">
-                {formData.employee_profile_url}
-              </a>
-            ) : (
-              <em>Не указано</em>
-            )}
-          </div>
-        </div>
-
-        {Object.keys(formData.custom_fields).length > 0 && (
+        {isDataReady && Object.keys(formData.custom_fields).length > 0 && (
           <div className="position-form-section position-form-section-custom-fields">
             <div className="position-form-section-divider"></div>
             <div className="custom-fields-chips">
@@ -575,6 +689,25 @@ function PositionForm({
               />
             </div>
           </div>
+          <div ref={combinedFieldRef} className="form-field form-field-inline form-field-combined">
+            <div className="form-field form-field-inline">
+              <label>EID </label>
+              <input
+                type="text"
+                value={formData.employee_id}
+                onChange={(e) => handleChange('employee_id', e.target.value)}
+              />
+            </div>
+            <span className={`field-separator ${isProfileLinkWrapped ? 'field-separator-hidden' : ''}`}>|</span>
+            <div ref={profileLinkRef} className="form-field form-field-inline form-field-profile-link">
+              <label>Ссылка на профиль</label>
+              <input
+                type="url"
+                value={formData.employee_profile_url}
+                onChange={(e) => handleChange('employee_profile_url', e.target.value)}
+              />
+            </div>
+          </div>
         </div>
         <div className="position-form-actions position-form-actions-vertical">
           <button type="button" className="btn btn-icon-ghost" onClick={onCancel} title="Отмена">
@@ -592,28 +725,6 @@ function PositionForm({
         </div>
       </div>
 
-      <div className="position-form-section">
-        <h3>Сотрудник</h3>
-
-        <div className="form-field">
-          <label>Внешний ID</label>
-          <input
-            type="text"
-            value={formData.employee_id}
-            onChange={(e) => handleChange('employee_id', e.target.value)}
-          />
-        </div>
-
-        <div className="form-field">
-          <label>Ссылка на профиль</label>
-          <input
-            type="url"
-            value={formData.employee_profile_url}
-            onChange={(e) => handleChange('employee_profile_url', e.target.value)}
-          />
-        </div>
-      </div>
-
       <div className="position-form-section position-form-section-custom-fields">
         <div className="position-form-section-divider"></div>
         <div className="custom-fields-section-header">
@@ -625,7 +736,7 @@ function PositionForm({
             {Object.keys(formData.custom_fields).length > 0 ? 'Изменить' : 'Добавить'} поля
           </button>
         </div>
-        {Object.keys(formData.custom_fields).length > 0 && (
+        {isDataReady && Object.keys(formData.custom_fields).length > 0 && (
           <div className="custom-fields-chips">
             {(() => {
               // Сначала определяем, какие поля являются linked полями для других полей
