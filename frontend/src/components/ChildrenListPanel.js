@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './ChildrenListPanel.css';
+import pencilIcon from '../assets/images/pencil.png';
 
 const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:8080/api';
 
@@ -163,24 +164,13 @@ const getSubdivisionWord = (count) => {
 
 function ChildrenListPanel({ node, onPositionSelect, onNodeSelect, onSuperiorUpdated }) {
   const [superiorInfo, setSuperiorInfo] = useState(null);
-  const [availableSuperiors, setAvailableSuperiors] = useState([]);
-  const [isEditingSuperior, setIsEditingSuperior] = useState(false);
   const [loadingSuperior, setLoadingSuperior] = useState(false);
-  const [loadingAvailable, setLoadingAvailable] = useState(false);
-
-  // Load superior information when node changes
-  useEffect(() => {
-    if (isFieldValueNode(node) && node.custom_field_value_id) {
-      loadSuperiorInfo();
-      loadAvailableSuperiors();
-    } else {
-      setSuperiorInfo(null);
-      setAvailableSuperiors([]);
-    }
-  }, [node]);
+  const [isEditingNode, setIsEditingNode] = useState(false);
+  const [pendingSuperiorId, setPendingSuperiorId] = useState(null);
+  const [hasChanges, setHasChanges] = useState(false);
 
   const loadSuperiorInfo = async () => {
-    if (!node.custom_field_value_id) return;
+    if (!node || !node.custom_field_value_id) return;
     setLoadingSuperior(true);
     try {
       const response = await axios.get(`${API_BASE}/custom-field-values/${node.custom_field_value_id}/superior`);
@@ -193,61 +183,19 @@ function ChildrenListPanel({ node, onPositionSelect, onNodeSelect, onSuperiorUpd
     }
   };
 
-  const loadAvailableSuperiors = async () => {
-    if (!node.custom_field_value_id) return;
-    setLoadingAvailable(true);
-    try {
-      const response = await axios.get(`${API_BASE}/custom-field-values/${node.custom_field_value_id}/available-superiors`);
-      setAvailableSuperiors(response.data || []);
-    } catch (error) {
-      console.error('Failed to load available superiors:', error);
-      setAvailableSuperiors([]);
-    } finally {
-      setLoadingAvailable(false);
+  // Load superior information when node changes
+  useEffect(() => {
+    if (isFieldValueNode(node) && node.custom_field_value_id) {
+      loadSuperiorInfo();
+    } else {
+      setSuperiorInfo(null);
     }
-  };
+    // Сбрасываем режим редактирования и изменения при смене узла
+    setIsEditingNode(false);
+    setPendingSuperiorId(null);
+    setHasChanges(false);
+  }, [node]);
 
-  const handleUpdateSuperior = async (superiorId) => {
-    if (!node.custom_field_value_id) return;
-    setLoadingSuperior(true);
-    try {
-      await axios.put(`${API_BASE}/custom-field-values/${node.custom_field_value_id}/superior`, {
-        superior: superiorId
-      });
-      await loadSuperiorInfo();
-      setIsEditingSuperior(false);
-      // Вызываем callback для обновления дерева с новым значением superior
-      if (onSuperiorUpdated) {
-        onSuperiorUpdated(superiorId);
-      }
-    } catch (error) {
-      console.error('Failed to update superior:', error);
-      alert('Ошибка при обновлении начальника: ' + (error.response?.data?.error || error.message));
-    } finally {
-      setLoadingSuperior(false);
-    }
-  };
-
-  const handleClearSuperior = async () => {
-    if (!node.custom_field_value_id) return;
-    setLoadingSuperior(true);
-    try {
-      await axios.put(`${API_BASE}/custom-field-values/${node.custom_field_value_id}/superior`, {
-        superior: null
-      });
-      await loadSuperiorInfo();
-      setIsEditingSuperior(false);
-      // Вызываем callback для обновления дерева с null значением
-      if (onSuperiorUpdated) {
-        onSuperiorUpdated(null);
-      }
-    } catch (error) {
-      console.error('Failed to clear superior:', error);
-      alert('Ошибка при удалении начальника: ' + (error.response?.data?.error || error.message));
-    } finally {
-      setLoadingSuperior(false);
-    }
-  };
 
   if (!node || !node.children || node.children.length === 0) {
     return (
@@ -259,10 +207,69 @@ function ChildrenListPanel({ node, onPositionSelect, onNodeSelect, onSuperiorUpd
     );
   }
 
-  const handlePositionClick = (positionId) => {
+  const handlePositionClick = (positionId, e) => {
+    // Предотвращаем клик, если кликнули на кнопку
+    if (e && e.target.closest('.children-list-item-superior-btn')) {
+      return;
+    }
     if (onPositionSelect) {
       onPositionSelect(positionId, null);
     }
+  };
+
+  // Определяем начальника среди позиций для использования в renderNode
+  // Используем pendingSuperiorId если есть изменения, иначе из superiorInfo
+  // superiorInfo.superior - это число (int64), position_id - это строка
+  const superiorId = pendingSuperiorId !== null
+    ? (pendingSuperiorId !== undefined ? Number(pendingSuperiorId) : null)
+    : (superiorInfo?.superior != null ? Number(superiorInfo.superior) : null);
+
+  const handleToggleSuperior = (positionId, e) => {
+    e.stopPropagation();
+    if (!node.custom_field_value_id) return;
+    
+    // Получаем текущий superiorId (используем pendingSuperiorId если есть изменения, иначе из superiorInfo)
+    const currentSuperiorId = pendingSuperiorId !== null 
+      ? (pendingSuperiorId !== undefined ? Number(pendingSuperiorId) : null)
+      : (superiorInfo?.superior != null ? Number(superiorInfo.superior) : null);
+    
+    const isCurrentlySuperior = currentSuperiorId !== null && positionId !== null && currentSuperiorId === positionId;
+    const newSuperiorId = isCurrentlySuperior ? null : positionId;
+    
+    // Сохраняем изменения локально, не применяем сразу
+    setPendingSuperiorId(newSuperiorId);
+    setHasChanges(true);
+  };
+
+  const handleSave = async () => {
+    if (!node.custom_field_value_id || !hasChanges) return;
+    
+    setLoadingSuperior(true);
+    try {
+      await axios.put(`${API_BASE}/custom-field-values/${node.custom_field_value_id}/superior`, {
+        superior: pendingSuperiorId
+      });
+      await loadSuperiorInfo();
+      // Вызываем callback для обновления дерева
+      if (onSuperiorUpdated) {
+        onSuperiorUpdated(pendingSuperiorId);
+      }
+      // Сбрасываем изменения
+      setPendingSuperiorId(null);
+      setHasChanges(false);
+    } catch (error) {
+      console.error('Failed to update superior:', error);
+      alert('Ошибка при обновлении начальника: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setLoadingSuperior(false);
+    }
+  };
+
+  const handleCancel = () => {
+    // Отменяем изменения и выходим из режима редактирования
+    setPendingSuperiorId(null);
+    setHasChanges(false);
+    setIsEditingNode(false);
   };
 
   const renderNode = (child, index) => {
@@ -272,23 +279,40 @@ function ChildrenListPanel({ node, onPositionSelect, onNodeSelect, onSuperiorUpd
                               typeof child.employee_full_name === 'string' && 
                               child.employee_full_name.trim() !== '';
       
+      // Проверяем, является ли эта должность начальником
+      const positionId = child.position_id ? Number(child.position_id) : null;
+      const isSuperior = superiorId !== null && positionId !== null && superiorId === positionId;
+      
       return (
         <div
           key={`position-${index}`}
-          className="children-list-item children-list-item--position"
-          onClick={() => handlePositionClick(child.position_id)}
+          className={`children-list-item children-list-item--position ${isSuperior ? 'children-list-item--superior' : ''}`}
+          onClick={(e) => handlePositionClick(child.position_id, e)}
         >
-          <span className="children-list-item-id">
-            {child.position_id && `#${child.position_id}`}
-          </span>
-          <span className="children-list-item-name">
-            {child.position_name || 'Без названия'}
-            {hasEmployeeName ? (
-              <> — {child.employee_full_name}</>
-            ) : (
-              <span className="position-vacant"> — Вакант</span>
-            )}
-          </span>
+          <div className="children-list-item-content">
+            <span className="children-list-item-id">
+              {child.position_id && `#${child.position_id}`}
+            </span>
+            <span className="children-list-item-name">
+              {isSuperior && <span className="superior-star">⭐</span>}
+              {child.position_name || 'Без названия'}
+              {hasEmployeeName ? (
+                <> — {child.employee_full_name}</>
+              ) : (
+                <span className="position-vacant"> — Вакант</span>
+              )}
+            </span>
+          </div>
+          {isFieldValueNode(node) && node.custom_field_value_id && isEditingNode && (
+            <button
+              className="children-list-item-superior-btn"
+              onClick={(e) => handleToggleSuperior(positionId, e)}
+              type="button"
+              disabled={loadingSuperior}
+            >
+              {isSuperior ? 'Сделать должность рядовой' : 'Сделать должность руководящей'}
+            </button>
+          )}
         </div>
       );
     }
@@ -377,115 +401,76 @@ function ChildrenListPanel({ node, onPositionSelect, onNodeSelect, onSuperiorUpd
   // Разделяем детей на подразделения и сотрудников
   const subdivisions = node.children.filter(child => isFieldValueNode(child));
   const positions = node.children.filter(child => child.type === 'position');
-
-  // Определяем начальника среди позиций
-  // superiorInfo.superior - это число (int64), position_id - это строка
-  const superiorId = superiorInfo?.superior != null ? Number(superiorInfo.superior) : null;
-  const superiorPosition = superiorId != null 
-    ? positions.find(pos => {
-        if (!pos.position_id) return false;
-        const posId = Number(pos.position_id);
-        return !isNaN(posId) && posId === superiorId;
-      })
-    : null;
-  const otherPositions = superiorPosition
-    ? positions.filter(pos => {
-        if (!pos.position_id) return true;
-        const posId = Number(pos.position_id);
-        return isNaN(posId) || posId !== superiorId;
-      })
-    : positions;
+  
+  // Сортируем позиции так, чтобы superior была первой
+  const sortedPositions = [...positions].sort((a, b) => {
+    const aId = a.position_id ? Number(a.position_id) : null;
+    const bId = b.position_id ? Number(b.position_id) : null;
+    
+    // Если есть superiorId и одна из позиций является superior, она должна быть первой
+    if (superiorId !== null) {
+      if (aId === superiorId) return -1; // a - superior, ставим первым
+      if (bId === superiorId) return 1;  // b - superior, ставим первым
+    }
+    
+    // Остальные позиции сохраняют исходный порядок
+    return 0;
+  });
 
   return (
     <div className="children-list-panel">
       <div className="children-list-header">
-        <h2 className="children-list-title">{nodeTitle}</h2>
-        <div className="children-list-subtitle">{subtitleText}</div>
-        {/* Superior section for custom_field_value nodes */}
+        <div className="children-list-header-content">
+          <h2 className="children-list-title">{nodeTitle}</h2>
+          <div className="children-list-subtitle">{subtitleText}</div>
+        </div>
         {isFieldValueNode(node) && node.custom_field_value_id && (
-          <div className="children-list-superior">
-            <div className="children-list-superior-label">Начальник:</div>
-            {!isEditingSuperior ? (
-              <div className="children-list-superior-display">
-                {loadingSuperior ? (
-                  <span>Загрузка...</span>
-                ) : superiorInfo && superiorInfo.superior ? (
-                  <div className="children-list-superior-info">
-                    <span className="children-list-superior-name">
-                      {superiorInfo.superior_name || `Должность #${superiorInfo.superior}`}
-                    </span>
-                    {superiorInfo.superior_employee && (
-                      <span className="children-list-superior-employee">
-                        {superiorInfo.superior_employee}
-                      </span>
-                    )}
-                    <button
-                      className="children-list-superior-edit-btn"
-                      onClick={() => setIsEditingSuperior(true)}
-                      type="button"
-                    >
-                      Изменить
-                    </button>
-                  </div>
-                ) : (
-                  <div className="children-list-superior-info">
-                    <span className="children-list-superior-empty">Не назначен</span>
-                    <button
-                      className="children-list-superior-edit-btn"
-                      onClick={() => setIsEditingSuperior(true)}
-                      type="button"
-                    >
-                      Назначить
-                    </button>
-                  </div>
-                )}
-              </div>
+          <div className="children-list-header-actions">
+            {!isEditingNode ? (
+              <button
+                className="btn btn-icon-ghost"
+                onClick={() => setIsEditingNode(true)}
+                type="button"
+                title="Редактировать узел"
+              >
+                <img src={pencilIcon} alt="Редактировать" className="pencil-icon" />
+              </button>
             ) : (
-              <div className="children-list-superior-edit">
-                {loadingAvailable ? (
-                  <span>Загрузка списка...</span>
-                ) : (
-                  <>
-                    <select
-                      className="children-list-superior-select"
-                      value={superiorInfo?.superior || ''}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        if (value) {
-                          handleUpdateSuperior(parseInt(value, 10));
-                        } else {
-                          handleClearSuperior();
-                        }
-                      }}
-                    >
-                      <option value="">Не назначен</option>
-                      {availableSuperiors.map((pos) => (
-                        <option key={pos.id} value={pos.id}>
-                          {pos.name} {pos.employee_name ? `(${pos.employee_name})` : ''}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className="children-list-superior-cancel-btn"
-                      onClick={() => setIsEditingSuperior(false)}
-                      type="button"
-                    >
-                      Отмена
-                    </button>
-                  </>
-                )}
+              <div className="children-list-actions-vertical">
+                <button
+                  className="btn btn-icon-ghost"
+                  onClick={handleCancel}
+                  type="button"
+                  title="Отмена"
+                  disabled={loadingSuperior}
+                >
+                  <svg className="icon-cross" width="30" height="30" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </button>
+                <button
+                  className="btn btn-icon-ghost"
+                  onClick={handleSave}
+                  type="button"
+                  title="Сохранить"
+                  disabled={!hasChanges || loadingSuperior}
+                >
+                  <svg className="icon-save" width="30" height="30" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V5C3 4.46957 3.21071 3.96086 3.58579 3.58579C3.96086 3.21071 4.46957 3 5 3H16L21 8V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M17 21V13H7V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M7 3V8H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </button>
               </div>
             )}
           </div>
         )}
       </div>
       <div className="children-list-content">
-        {/* Сначала показываем начальника (если он есть в списке позиций) */}
-        {superiorPosition && renderNode(superiorPosition, 0)}
-        {/* Затем показываем остальных сотрудников */}
-        {otherPositions.map((child, index) => renderNode(child, (superiorPosition ? 1 : 0) + index))}
+        {/* Показываем все позиции вместе (начальник будет выделен визуально) */}
+        {sortedPositions.map((child, index) => renderNode(child, index))}
         {/* Затем показываем подразделения */}
-        {subdivisions.map((child, index) => renderNode(child, (superiorPosition ? 1 : 0) + otherPositions.length + index))}
+        {subdivisions.map((child, index) => renderNode(child, sortedPositions.length + index))}
       </div>
     </div>
   );
