@@ -29,19 +29,46 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 	// If no levels, return plain list of positions
 	if len(tree.Levels) == 0 {
 		rows, _ := db.Query(
-			`SELECT id, name, employee_full_name FROM positions ORDER BY id`,
+			`SELECT id, position_name, employee_surname, employee_name, employee_patronymic FROM positions ORDER BY id`,
 		)
 		defer rows.Close()
 
 		for rows.Next() {
 			var positionID int64
 			var positionName string
-			var employeeFullName sql.NullString
-			if err := rows.Scan(&positionID, &positionName, &employeeFullName); err == nil {
+			var surname sql.NullString
+			var employeeName sql.NullString
+			var patronymic sql.NullString
+			if err := rows.Scan(&positionID, &positionName, &surname, &employeeName, &patronymic); err == nil {
 				idStr := fmt.Sprint(positionID)
 				var employeeFullNamePtr *string
-				if employeeFullName.Valid && employeeFullName.String != "" {
-					employeeFullNamePtr = &employeeFullName.String
+				var surnamePtr, employeeNamePtr, patronymicPtr *string
+				if surname.Valid && surname.String != "" {
+					surnamePtr = &surname.String
+				}
+				if employeeName.Valid && employeeName.String != "" {
+					employeeNamePtr = &employeeName.String
+				}
+				if patronymic.Valid && patronymic.String != "" {
+					patronymicPtr = &patronymic.String
+				}
+				// Combine into full name
+				var parts []string
+				if surnamePtr != nil {
+					parts = append(parts, *surnamePtr)
+				}
+				if employeeNamePtr != nil {
+					parts = append(parts, *employeeNamePtr)
+				}
+				if patronymicPtr != nil {
+					parts = append(parts, *patronymicPtr)
+				}
+				if len(parts) > 0 {
+					fullName := fmt.Sprintf("%s", parts[0])
+					for i := 1; i < len(parts); i++ {
+						fullName += " " + parts[i]
+					}
+					employeeFullNamePtr = &fullName
 				}
 				structure.Root.Children = append(structure.Root.Children, TreeNode{
 					Type:            "position",
@@ -70,13 +97,13 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 	// Get all positions в порядке их создания (по id)
 	rows, _ := db.Query(
 		// ВАЖНО:
-		//  - custom_fields_ids теперь хранит ID самих кастомных полей (field_id),
-		//  - custom_fields_values_ids хранит ID выбранных значений (value_id).
+		//  - custom_fields_id теперь хранит ID самих кастомных полей (field_id),
+		//  - custom_fields_values_id хранит ID выбранных значений (value_id).
 		// Для построения иерархии по значениям нам нужны ИМЕННО value_id,
-		// поэтому здесь используем custom_fields_values_ids.
-		// Дополнительно читаем custom_fields_ids, чтобы корректно восстановить структуру
+		// поэтому здесь используем custom_fields_values_id.
+		// Дополнительно читаем custom_fields_id, чтобы корректно восстановить структуру
 		// с учётом linked_custom_fields так же, как это делает ручка positions/{id}.
-		`SELECT id, name, custom_fields_ids, custom_fields_values_ids, employee_full_name FROM positions ORDER BY id`,
+		`SELECT id, position_name, custom_fields_id, custom_fields_values_id, employee_id, employee_surname, employee_name, employee_patronymic FROM positions ORDER BY id`,
 	)
 	defer rows.Close()
 
@@ -98,8 +125,11 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 		}
 		var customFieldsIDsJSON []byte
 		var customFieldsValuesIDsJSON []byte
-		var employeeFullName sql.NullString
-		if err := rows.Scan(&p.ID, &p.Name, &customFieldsIDsJSON, &customFieldsValuesIDsJSON, &employeeFullName); err == nil {
+		var employeeExternalID sql.NullString
+		var surname sql.NullString
+		var employeeName sql.NullString
+		var patronymic sql.NullString
+		if err := rows.Scan(&p.ID, &p.Name, &customFieldsIDsJSON, &customFieldsValuesIDsJSON, &employeeExternalID, &surname, &employeeName, &patronymic); err == nil {
 			p.CustomFields = make(map[string]string)
 			p.CustomFieldDetails = make(map[string]PositionCustomFieldValue)
 
@@ -130,8 +160,23 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 				}
 			}
 
-			if employeeFullName.Valid && employeeFullName.String != "" {
-				p.EmployeeFullName = &employeeFullName.String
+			// Combine surname, employee_name, patronymic into full name
+			var parts []string
+			if surname.Valid && surname.String != "" {
+				parts = append(parts, surname.String)
+			}
+			if employeeName.Valid && employeeName.String != "" {
+				parts = append(parts, employeeName.String)
+			}
+			if patronymic.Valid && patronymic.String != "" {
+				parts = append(parts, patronymic.String)
+			}
+			if len(parts) > 0 {
+				fullName := fmt.Sprintf("%s", parts[0])
+				for i := 1; i < len(parts); i++ {
+					fullName += " " + parts[i]
+				}
+				p.EmployeeFullName = &fullName
 			}
 			positions = append(positions, p)
 		}

@@ -89,7 +89,7 @@ function PositionsListModal({ onClose }) {
                       </td>
                       <td>{p.name}</td>
                       <td>{p.employee_full_name || '—'}</td>
-                      <td>{p.employee_external_id || '—'}</td>
+                      <td>{p.employee_id || '—'}</td>
                       <td>
                         {p.employee_profile_url ? (
                           <a

@@ -802,7 +802,7 @@ function TreePanel({
           description: '',
           custom_fields: customFieldsArray,
           employee_full_name: '',
-          employee_external_id: '',
+          employee_id: '',
           employee_profile_url: ''
         });
 

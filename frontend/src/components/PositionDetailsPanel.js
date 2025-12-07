@@ -77,7 +77,7 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
           custom_fields: initialPath,
           custom_fields_order: calculatedOrder,
           employee_full_name: '',
-          employee_external_id: '',
+          employee_id: '',
           employee_profile_url: ''
         });
         setIsEditing(true);
@@ -328,7 +328,7 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
         id: savedPositionId,
         name: positionData.name,
         employee_full_name: positionData.employee_full_name,
-        employee_external_id: positionData.employee_external_id,
+        employee_id: positionData.employee_id,
         employee_profile_url: positionData.employee_profile_url,
         custom_fields: optimisticCustomFields,
         custom_fields_array: customFieldsArray,

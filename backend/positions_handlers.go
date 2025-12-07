@@ -11,6 +11,26 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 )
+
+// Helper function to combine surname, employee_name, and patronymic into full name
+func combineEmployeeFullName(surname, employeeName, patronymic *string) *string {
+	var parts []string
+	if surname != nil && *surname != "" {
+		parts = append(parts, *surname)
+	}
+	if employeeName != nil && *employeeName != "" {
+		parts = append(parts, *employeeName)
+	}
+	if patronymic != nil && *patronymic != "" {
+		parts = append(parts, *patronymic)
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	fullName := strings.Join(parts, " ")
+	return &fullName
+}
+
 // Position handlers
 
 func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
@@ -39,8 +59,8 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 	var query string
 	var args []interface{}
 
-	baseQuery := `SELECT id, name, description, custom_fields_ids, custom_fields_values_ids, employee_full_name, 
-		employee_external_id, employee_profile_url, created_at, updated_at
+	baseQuery := `SELECT id, position_name, custom_fields_id, custom_fields_values_id, employee_id, employee_surname, employee_name, employee_patronymic, 
+		employee_profile_url, created_at, updated_at
 		FROM positions`
 
 	if whereClause != "" {
@@ -65,8 +85,8 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 		var p Position
 		var customFieldsIDsJSON []byte
 		var customFieldsValuesIDsJSON []byte
-		err := rows.Scan(&p.ID, &p.Name, &p.Description, &customFieldsIDsJSON, &customFieldsValuesIDsJSON,
-			&p.EmployeeFullName, &p.EmployeeExternalID, &p.EmployeeProfileURL,
+		err := rows.Scan(&p.ID, &p.Name, &customFieldsIDsJSON, &customFieldsValuesIDsJSON,
+			&p.EmployeeExternalID, &p.Surname, &p.EmployeeName, &p.Patronymic, &p.EmployeeProfileURL,
 			&p.CreatedAt, &p.UpdatedAt)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -86,14 +106,19 @@ func (h *Handler) GetPositions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Compute employee_full_name for backward compatibility
+		p.EmployeeFullName = combineEmployeeFullName(p.Surname, p.EmployeeName, p.Patronymic)
+
 		// Build response object with custom_fields array
 		positionResponse := map[string]interface{}{
 			"id":                   p.ID,
 			"name":                 p.Name,
-			"description":          p.Description,
 			"custom_fields":        customFieldsArray,
+			"employee_id": p.EmployeeExternalID,
+			"surname":              p.Surname,
+			"employee_name":        p.EmployeeName,
+			"patronymic":           p.Patronymic,
 			"employee_full_name":   p.EmployeeFullName,
-			"employee_external_id": p.EmployeeExternalID,
 			"employee_profile_url": p.EmployeeProfileURL,
 			"created_at":           p.CreatedAt,
 			"updated_at":           p.UpdatedAt,
@@ -133,12 +158,12 @@ func (h *Handler) GetPosition(w http.ResponseWriter, r *http.Request) {
 	var customFieldsIDsJSON []byte
 	var customFieldsValuesIDsJSON []byte
 	err = h.db.QueryRow(
-		`SELECT id, name, description, custom_fields_ids, custom_fields_values_ids, employee_full_name, 
-		employee_external_id, employee_profile_url, created_at, updated_at
+		`SELECT id, position_name, custom_fields_id, custom_fields_values_id, employee_id, employee_surname, employee_name, employee_patronymic, 
+		employee_profile_url, created_at, updated_at
 		FROM positions WHERE id = $1`,
 		id,
-	).Scan(&p.ID, &p.Name, &p.Description, &customFieldsIDsJSON, &customFieldsValuesIDsJSON,
-		&p.EmployeeFullName, &p.EmployeeExternalID, &p.EmployeeProfileURL,
+	).Scan(&p.ID, &p.Name, &customFieldsIDsJSON, &customFieldsValuesIDsJSON,
+		&p.EmployeeExternalID, &p.Surname, &p.EmployeeName, &p.Patronymic, &p.EmployeeProfileURL,
 		&p.CreatedAt, &p.UpdatedAt)
 
 	if err == sql.ErrNoRows {
@@ -164,13 +189,18 @@ func (h *Handler) GetPosition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Compute employee_full_name for backward compatibility
+	p.EmployeeFullName = combineEmployeeFullName(p.Surname, p.EmployeeName, p.Patronymic)
+
 	response := map[string]interface{}{
 		"id":                   p.ID,
 		"name":                 p.Name,
-		"description":          p.Description,
 		"custom_fields":        customFieldsArray,
+		"employee_id": p.EmployeeExternalID,
+		"surname":              p.Surname,
+		"employee_name":        p.EmployeeName,
+		"patronymic":           p.Patronymic,
 		"employee_full_name":   p.EmployeeFullName,
-		"employee_external_id": p.EmployeeExternalID,
 		"employee_profile_url": p.EmployeeProfileURL,
 		"created_at":           p.CreatedAt,
 		"updated_at":           p.UpdatedAt,
@@ -190,27 +220,56 @@ func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
 
 	// Extract basic fields
 	var name string
-	var description *string
-	var employeeFullName *string
+	var surname *string
+	var employeeName *string
+	var patronymic *string
 	var employeeExternalID *string
 	var employeeProfileURL *string
 
 	if n, ok := requestBody["name"].(string); ok {
 		name = n
 	}
-	if d, ok := requestBody["description"].(string); ok {
-		description = &d
-	} else if requestBody["description"] == nil {
-		description = nil
+	// Handle both new format (surname, employee_name, patronymic) and old format (employee_full_name)
+	if s, ok := requestBody["surname"].(string); ok {
+		if s != "" {
+			surname = &s
+		}
+	} else if requestBody["surname"] == nil {
+		surname = nil
 	}
-	if efn, ok := requestBody["employee_full_name"].(string); ok {
-		employeeFullName = &efn
-	} else if requestBody["employee_full_name"] == nil {
-		employeeFullName = nil
+	if en, ok := requestBody["employee_name"].(string); ok {
+		if en != "" {
+			employeeName = &en
+		}
+	} else if requestBody["employee_name"] == nil {
+		employeeName = nil
 	}
-	if eid, ok := requestBody["employee_external_id"].(string); ok {
+	if p, ok := requestBody["patronymic"].(string); ok {
+		if p != "" {
+			patronymic = &p
+		}
+	} else if requestBody["patronymic"] == nil {
+		patronymic = nil
+	}
+	
+	// Backward compatibility: if employee_full_name is provided, parse it
+	if efn, ok := requestBody["employee_full_name"].(string); ok && efn != "" {
+		parts := strings.Fields(efn)
+		if len(parts) > 0 {
+			surname = &parts[0]
+		}
+		if len(parts) > 1 {
+			employeeName = &parts[1]
+		}
+		if len(parts) > 2 {
+			pat := strings.Join(parts[2:], " ")
+			patronymic = &pat
+		}
+	}
+	
+	if eid, ok := requestBody["employee_id"].(string); ok {
 		employeeExternalID = &eid
-	} else if requestBody["employee_external_id"] == nil {
+	} else if requestBody["employee_id"] == nil {
 		employeeExternalID = nil
 	}
 	if epu, ok := requestBody["employee_profile_url"].(string); ok {
@@ -331,12 +390,12 @@ func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
 
 	var positionID int64
 	err := h.db.QueryRow(
-		`INSERT INTO positions (name, description, custom_fields_ids, custom_fields_values_ids, employee_full_name, 
-		employee_external_id, employee_profile_url, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+		`INSERT INTO positions (position_name, custom_fields_id, custom_fields_values_id, employee_id, employee_surname, employee_name, employee_patronymic, 
+		employee_profile_url, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
 		RETURNING id`,
-		name, description, customFieldsIDsJSON, customFieldsValuesIDsJSON,
-		employeeFullName, employeeExternalID, employeeProfileURL,
+		name, customFieldsIDsJSON, customFieldsValuesIDsJSON,
+		employeeExternalID, surname, employeeName, patronymic, employeeProfileURL,
 	).Scan(&positionID)
 
 	if err != nil {
@@ -346,18 +405,27 @@ func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
 
 	// Get created position to return with timestamps
 	var p Position
+	var customFieldsIDsFromCreated []byte
+	var customFieldsValuesIDsFromCreated []byte
 	err = h.db.QueryRow(
-		`SELECT id, name, description, employee_full_name, 
-		employee_external_id, employee_profile_url, created_at, updated_at
+		`SELECT id, position_name, custom_fields_id, custom_fields_values_id, employee_id, employee_surname, employee_name, employee_patronymic, 
+		employee_profile_url, created_at, updated_at
 		FROM positions WHERE id = $1`,
 		positionID,
-	).Scan(&p.ID, &p.Name, &p.Description,
-		&p.EmployeeFullName, &p.EmployeeExternalID, &p.EmployeeProfileURL,
+	).Scan(&p.ID, &p.Name, &customFieldsIDsFromCreated, &customFieldsValuesIDsFromCreated,
+		&p.EmployeeExternalID, &p.Surname, &p.EmployeeName, &p.Patronymic, &p.EmployeeProfileURL,
 		&p.CreatedAt, &p.UpdatedAt)
 
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	if customFieldsIDsFromCreated != nil {
+		json.Unmarshal(customFieldsIDsFromCreated, &p.CustomFieldsIDs)
+	}
+	if customFieldsValuesIDsFromCreated != nil {
+		json.Unmarshal(customFieldsValuesIDsFromCreated, &p.CustomFieldsValuesIDs)
 	}
 
 	// Enrich the original custom_fields structure from request with additional data from DB
@@ -374,13 +442,18 @@ func (h *Handler) CreatePosition(w http.ResponseWriter, r *http.Request) {
 		customFieldsForResponse = []interface{}{}
 	}
 
+	// Compute employee_full_name for backward compatibility
+	p.EmployeeFullName = combineEmployeeFullName(p.Surname, p.EmployeeName, p.Patronymic)
+
 	response := map[string]interface{}{
 		"id":                   p.ID,
 		"name":                 p.Name,
-		"description":          p.Description,
 		"custom_fields":        customFieldsForResponse,
+		"employee_id": p.EmployeeExternalID,
+		"surname":              p.Surname,
+		"employee_name":        p.EmployeeName,
+		"patronymic":           p.Patronymic,
 		"employee_full_name":   p.EmployeeFullName,
-		"employee_external_id": p.EmployeeExternalID,
 		"employee_profile_url": p.EmployeeProfileURL,
 		"created_at":           p.CreatedAt,
 		"updated_at":           p.UpdatedAt,
@@ -983,27 +1056,56 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 
 	// Extract basic fields
 	var name string
-	var description *string
-	var employeeFullName *string
+	var surname *string
+	var employeeName *string
+	var patronymic *string
 	var employeeExternalID *string
 	var employeeProfileURL *string
 
 	if n, ok := requestBody["name"].(string); ok {
 		name = n
 	}
-	if d, ok := requestBody["description"].(string); ok {
-		description = &d
-	} else if requestBody["description"] == nil {
-		description = nil
+	// Handle both new format (surname, employee_name, patronymic) and old format (employee_full_name)
+	if s, ok := requestBody["surname"].(string); ok {
+		if s != "" {
+			surname = &s
+		}
+	} else if requestBody["surname"] == nil {
+		surname = nil
 	}
-	if efn, ok := requestBody["employee_full_name"].(string); ok {
-		employeeFullName = &efn
-	} else if requestBody["employee_full_name"] == nil {
-		employeeFullName = nil
+	if en, ok := requestBody["employee_name"].(string); ok {
+		if en != "" {
+			employeeName = &en
+		}
+	} else if requestBody["employee_name"] == nil {
+		employeeName = nil
 	}
-	if eid, ok := requestBody["employee_external_id"].(string); ok {
+	if p, ok := requestBody["patronymic"].(string); ok {
+		if p != "" {
+			patronymic = &p
+		}
+	} else if requestBody["patronymic"] == nil {
+		patronymic = nil
+	}
+	
+	// Backward compatibility: if employee_full_name is provided, parse it
+	if efn, ok := requestBody["employee_full_name"].(string); ok && efn != "" {
+		parts := strings.Fields(efn)
+		if len(parts) > 0 {
+			surname = &parts[0]
+		}
+		if len(parts) > 1 {
+			employeeName = &parts[1]
+		}
+		if len(parts) > 2 {
+			pat := strings.Join(parts[2:], " ")
+			patronymic = &pat
+		}
+	}
+	
+	if eid, ok := requestBody["employee_id"].(string); ok {
 		employeeExternalID = &eid
-	} else if requestBody["employee_external_id"] == nil {
+	} else if requestBody["employee_id"] == nil {
 		employeeExternalID = nil
 	}
 	if epu, ok := requestBody["employee_profile_url"].(string); ok {
@@ -1140,11 +1242,11 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[UpdatePosition] customFieldsValuesIDsJSON: %s", string(customFieldsValuesIDsJSON))
 
 	result, err := h.db.Exec(
-		`UPDATE positions SET name = $1, description = $2, custom_fields_ids = $3, custom_fields_values_ids = $4, 
-		employee_full_name = $5, employee_external_id = $6, employee_profile_url = $7, 
-		updated_at = NOW() WHERE id = $8`,
-		name, description, customFieldsIDsJSON, customFieldsValuesIDsJSON,
-		employeeFullName, employeeExternalID, employeeProfileURL, id,
+		`UPDATE positions SET position_name = $1, custom_fields_id = $2, custom_fields_values_id = $3, 
+		employee_id = $4, employee_surname = $5, employee_name = $6, employee_patronymic = $7, employee_profile_url = $8, 
+		updated_at = NOW() WHERE id = $9`,
+		name, customFieldsIDsJSON, customFieldsValuesIDsJSON,
+		employeeExternalID, surname, employeeName, patronymic, employeeProfileURL, id,
 	)
 
 	if err != nil {
@@ -1164,12 +1266,12 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 	var customFieldsIDsFromDB []byte
 	var customFieldsValuesIDsFromDB []byte
 	err = h.db.QueryRow(
-		`SELECT id, name, description, custom_fields_ids, custom_fields_values_ids, employee_full_name, 
-		employee_external_id, employee_profile_url, created_at, updated_at
+		`SELECT id, position_name, custom_fields_id, custom_fields_values_id, employee_id, employee_surname, employee_name, employee_patronymic, 
+		employee_profile_url, created_at, updated_at
 		FROM positions WHERE id = $1`,
 		id,
-	).Scan(&p.ID, &p.Name, &p.Description, &customFieldsIDsFromDB, &customFieldsValuesIDsFromDB,
-		&p.EmployeeFullName, &p.EmployeeExternalID, &p.EmployeeProfileURL,
+	).Scan(&p.ID, &p.Name, &customFieldsIDsFromDB, &customFieldsValuesIDsFromDB,
+		&p.EmployeeExternalID, &p.Surname, &p.EmployeeName, &p.Patronymic, &p.EmployeeProfileURL,
 		&p.CreatedAt, &p.UpdatedAt)
 
 	if err != nil {
@@ -1191,13 +1293,18 @@ func (h *Handler) UpdatePosition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Compute employee_full_name for backward compatibility
+	p.EmployeeFullName = combineEmployeeFullName(p.Surname, p.EmployeeName, p.Patronymic)
+
 	response := map[string]interface{}{
 		"id":                   p.ID,
 		"name":                 p.Name,
-		"description":          p.Description,
 		"custom_fields":        customFieldsArray,
+		"employee_id": p.EmployeeExternalID,
+		"surname":              p.Surname,
+		"employee_name":        p.EmployeeName,
+		"patronymic":           p.Patronymic,
 		"employee_full_name":   p.EmployeeFullName,
-		"employee_external_id": p.EmployeeExternalID,
 		"employee_profile_url": p.EmployeeProfileURL,
 		"created_at":           p.CreatedAt,
 		"updated_at":           p.UpdatedAt,

@@ -84,7 +84,16 @@ export function matchesSingleTerm(position, term, customFields = []) {
     return true;
   }
 
-  // Search by employee name
+  // Search by employee name (check both new fields and legacy employee_full_name)
+  if (position.surname && position.surname.toLowerCase().includes(termLower)) {
+    return true;
+  }
+  if (position.employee_name && position.employee_name.toLowerCase().includes(termLower)) {
+    return true;
+  }
+  if (position.patronymic && position.patronymic.toLowerCase().includes(termLower)) {
+    return true;
+  }
   if (position.employee_full_name && position.employee_full_name.toLowerCase().includes(termLower)) {
     return true;
   }

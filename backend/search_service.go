@@ -90,9 +90,10 @@ func BuildWhereClause(query *SearchQuery) (string, []interface{}) {
 		if len(condition.Terms) == 1 {
 			// Single term - simple condition
 			conditions = append(conditions,
-				`(name ILIKE $`+strconv.Itoa(argIndex)+` OR 
-				COALESCE(description, '') ILIKE $`+strconv.Itoa(argIndex)+` OR 
-				COALESCE(employee_full_name, '') ILIKE $`+strconv.Itoa(argIndex)+`)`)
+				`(position_name ILIKE $`+strconv.Itoa(argIndex)+` OR 
+				COALESCE(employee_surname, '') ILIKE $`+strconv.Itoa(argIndex)+` OR 
+				COALESCE(employee_name, '') ILIKE $`+strconv.Itoa(argIndex)+` OR 
+				COALESCE(employee_patronymic, '') ILIKE $`+strconv.Itoa(argIndex)+`)`)
 			args = append(args, "%"+condition.Terms[0]+"%")
 			argIndex++
 		} else {
@@ -100,9 +101,10 @@ func BuildWhereClause(query *SearchQuery) (string, []interface{}) {
 			var orConditions []string
 			for _, term := range condition.Terms {
 				orConditions = append(orConditions,
-					`(name ILIKE $`+strconv.Itoa(argIndex)+` OR 
-					COALESCE(description, '') ILIKE $`+strconv.Itoa(argIndex)+` OR 
-					COALESCE(employee_full_name, '') ILIKE $`+strconv.Itoa(argIndex)+`)`)
+					`(position_name ILIKE $`+strconv.Itoa(argIndex)+` OR 
+					COALESCE(employee_surname, '') ILIKE $`+strconv.Itoa(argIndex)+` OR 
+					COALESCE(employee_name, '') ILIKE $`+strconv.Itoa(argIndex)+` OR 
+					COALESCE(employee_patronymic, '') ILIKE $`+strconv.Itoa(argIndex)+`)`)
 				args = append(args, "%"+term+"%")
 				argIndex++
 			}

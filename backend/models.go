@@ -11,12 +11,14 @@ import (
 // Position represents a job position
 type Position struct {
 	ID                      int64           `json:"id" db:"id"`
-	Name                    string          `json:"name" db:"name"`
-	Description             *string         `json:"description" db:"description"`
-	CustomFieldsIDs         *UUIDArray      `json:"custom_fields" db:"custom_fields_ids"`                     // Stored as array of UUIDs in DB, returned as custom_fields in JSON
-	CustomFieldsValuesIDs   *UUIDArray      `json:"custom_fields_values_ids,omitempty" db:"custom_fields_values_ids"` // Stored as array of UUIDs in DB, exposed for search/UX
-	EmployeeFullName        *string         `json:"employee_full_name" db:"employee_full_name"`
-	EmployeeExternalID      *string         `json:"employee_external_id" db:"employee_external_id"`
+	Name                    string          `json:"name" db:"position_name"`
+	CustomFieldsIDs         *UUIDArray      `json:"custom_fields" db:"custom_fields_id"`                     // Stored as array of UUIDs in DB, returned as custom_fields in JSON
+	CustomFieldsValuesIDs   *UUIDArray      `json:"custom_fields_values_ids,omitempty" db:"custom_fields_values_id"` // Stored as array of UUIDs in DB, exposed for search/UX
+	Surname                 *string         `json:"surname" db:"employee_surname"`
+	EmployeeName            *string         `json:"employee_name" db:"employee_name"`
+	Patronymic              *string         `json:"patronymic" db:"employee_patronymic"`
+	EmployeeFullName        *string         `json:"employee_full_name,omitempty" db:"-"` // Computed field for backward compatibility
+	EmployeeExternalID      *string         `json:"employee_id" db:"employee_id"`
 	EmployeeProfileURL      *string         `json:"employee_profile_url" db:"employee_profile_url"`
 	CreatedAt               time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt               time.Time       `json:"updated_at" db:"updated_at"`

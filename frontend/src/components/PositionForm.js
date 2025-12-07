@@ -21,7 +21,7 @@ function PositionForm({
     employee_last_name: '',
     employee_first_name: '',
     employee_middle_name: '',
-    employee_external_id: '',
+    employee_id: '',
     employee_profile_url: ''
   });
 
@@ -52,14 +52,26 @@ function PositionForm({
 
   useEffect(() => {
     if (position) {
-      const nameParts = parseFullName(position.employee_full_name || '');
+      // Приоритет: новые поля (surname, employee_name, patronymic), иначе парсим employee_full_name для обратной совместимости
+      let surname = position.surname || '';
+      let employeeName = position.employee_name || '';
+      let patronymic = position.patronymic || '';
+      
+      // Если новых полей нет, парсим из employee_full_name (обратная совместимость)
+      if (!surname && !employeeName && !patronymic && position.employee_full_name) {
+        const nameParts = parseFullName(position.employee_full_name || '');
+        surname = nameParts.last;
+        employeeName = nameParts.first;
+        patronymic = nameParts.middle;
+      }
+      
       setFormData({
         name: position.name || '',
         custom_fields: position.custom_fields || {},
-        employee_last_name: nameParts.last,
-        employee_first_name: nameParts.first,
-        employee_middle_name: nameParts.middle,
-        employee_external_id: position.employee_external_id || '',
+        employee_last_name: surname,
+        employee_first_name: employeeName,
+        employee_middle_name: patronymic,
+        employee_id: position.employee_id || '',
         employee_profile_url: position.employee_profile_url || ''
       });
       // Сохраняем порядок полей из позиции
@@ -71,7 +83,7 @@ function PositionForm({
         employee_last_name: '',
         employee_first_name: '',
         employee_middle_name: '',
-        employee_external_id: '',
+        employee_id: '',
         employee_profile_url: ''
       });
       setCustomFieldsOrderState([]);
@@ -401,14 +413,12 @@ function PositionForm({
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    // Объединяем отдельные поля ФИО в одно поле для отправки на сервер
+    // Отправляем отдельные поля ФИО на сервер
     const dataToSave = {
       ...formData,
-      employee_full_name: combineFullName(
-        formData.employee_last_name,
-        formData.employee_first_name,
-        formData.employee_middle_name
-      ),
+      surname: formData.employee_last_name || null,
+      employee_name: formData.employee_first_name || null,
+      patronymic: formData.employee_middle_name || null,
       custom_fields_order: customFieldsOrderState
     };
     // Удаляем временные поля перед отправкой
@@ -450,7 +460,7 @@ function PositionForm({
           <h3>Сотрудник</h3>
           <div className="form-field">
             <label>Внешний ID:</label>
-            <p>{formData.employee_external_id || <em>Не указано</em>}</p>
+            <p>{formData.employee_id || <em>Не указано</em>}</p>
           </div>
           <div className="form-field">
             <label>Ссылка на профиль:</label>
@@ -589,8 +599,8 @@ function PositionForm({
           <label>Внешний ID</label>
           <input
             type="text"
-            value={formData.employee_external_id}
-            onChange={(e) => handleChange('employee_external_id', e.target.value)}
+            value={formData.employee_id}
+            onChange={(e) => handleChange('employee_id', e.target.value)}
           />
         </div>
 
