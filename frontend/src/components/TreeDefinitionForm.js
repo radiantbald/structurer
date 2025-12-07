@@ -5,12 +5,12 @@ import './TreeDefinitionForm.css';
 
 const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:8080/api';
 
-function TreeDefinitionForm({ onClose, onChanged }) {
-  const [trees, setTrees] = useState([]);
+function TreeDefinitionForm({ onClose, onChanged, trees: treesProp, customFields: customFieldsProp }) {
+  const [trees, setTrees] = useState(treesProp || []);
   const [loadingTrees, setLoadingTrees] = useState(false);
   const [treesError, setTreesError] = useState('');
 
-  const [availableFields, setAvailableFields] = useState([]);
+  const [availableFields, setAvailableFields] = useState(customFieldsProp || []);
   const [loadingFields, setLoadingFields] = useState(false);
   const [fieldsError, setFieldsError] = useState('');
 
@@ -29,9 +29,27 @@ function TreeDefinitionForm({ onClose, onChanged }) {
     levels: []
   });
 
+  // Обновляем данные при изменении пропсов
   useEffect(() => {
-    loadTrees();
-    loadFields();
+    if (treesProp && treesProp.length > 0) {
+      setTrees(treesProp);
+    }
+  }, [treesProp]);
+
+  useEffect(() => {
+    if (customFieldsProp && customFieldsProp.length > 0) {
+      setAvailableFields(customFieldsProp);
+    }
+  }, [customFieldsProp]);
+
+  useEffect(() => {
+    // Загружаем только если не переданы через props
+    if (!treesProp || treesProp.length === 0) {
+      loadTrees();
+    }
+    if (!customFieldsProp || customFieldsProp.length === 0) {
+      loadFields();
+    }
   }, []);
 
   const loadTrees = async () => {

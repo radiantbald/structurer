@@ -9,3 +9,4 @@ ALTER TABLE custom_field_values DROP COLUMN IF EXISTS linked_custom_fields;
 COMMIT;
 
 
+

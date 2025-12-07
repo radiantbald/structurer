@@ -48,6 +48,8 @@ function AppLayout() {
     const saved = localStorage.getItem(STORAGE_KEYS.SELECTED_NODE_PATH);
     return saved ? JSON.parse(saved) : null;
   });
+  const [trees, setTrees] = useState([]);
+  const [customFields, setCustomFields] = useState([]);
 
   const handlePositionSelect = (positionId, path, name) => {
     setSelectedPositionId(positionId);
@@ -358,6 +360,14 @@ function AppLayout() {
     setRefreshTrigger(prev => prev + 1);
   };
 
+  const handleTreesLoaded = (treesData) => {
+    setTrees(treesData);
+  };
+
+  const handleCustomFieldsLoaded = (fieldsData) => {
+    setCustomFields(fieldsData);
+  };
+
   return (
     <div className="app-shell">
       <div className="app-body">
@@ -375,6 +385,8 @@ function AppLayout() {
               selectedPositionId={selectedPositionId}
               onTreeStructureChange={handleTreeStructureChange}
               deletedCustomField={deletedCustomField}
+              onTreesLoaded={handleTreesLoaded}
+              onCustomFieldsLoaded={handleCustomFieldsLoaded}
             />
           }
           rightPanel={
@@ -393,6 +405,7 @@ function AppLayout() {
                 initialName={initialName}
                 deletedCustomField={deletedCustomField}
                 treeStructure={treeStructure}
+                customFields={customFields}
               />
             )
           }
@@ -403,6 +416,8 @@ function AppLayout() {
         <TreeDefinitionForm
           onClose={() => setShowTreeDefinition(false)}
           onChanged={handleTreeDefinitionChanged}
+          trees={trees}
+          customFields={customFields}
         />
       )}
 

@@ -17,3 +17,4 @@ CREATE INDEX IF NOT EXISTS idx_positions_custom_fields_values_ids ON positions U
 COMMIT;
 
 
+

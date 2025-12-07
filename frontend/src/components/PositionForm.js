@@ -122,14 +122,74 @@ function PositionForm({
   };
 
   // Сортирует кастомные поля с учетом сохраненного порядка и уровней дерева
-  // Сначала использует сохраненный порядок, затем сортирует по уровням дерева
+  // ВАЖНО: Поля из дерева всегда идут в порядке уровней дерева, независимо от сохраненного порядка
+  // Сохраненный порядок используется только для полей, которых нет в дереве
   const sortCustomFields = (customFieldsEntries) => {
-    // Если есть сохраненный порядок, используем его
+    // Всегда используем порядок из дерева для полей, которые есть в дереве
+    if (treeStructure && treeStructure.levels && Array.isArray(treeStructure.levels)) {
+      // Создаем карту: custom_field_key -> order из дерева
+      const levelOrderMap = new Map();
+      treeStructure.levels
+        .sort((a, b) => (a.order || 0) - (b.order || 0))
+        .forEach((level, index) => {
+          if (level.custom_field_key) {
+            levelOrderMap.set(level.custom_field_key, level.order !== undefined ? level.order : index);
+          }
+        });
+
+      // Разделяем поля на две группы: из дерева и не из дерева
+      const fieldsInTree = [];
+      const fieldsNotInTree = [];
+
+      customFieldsEntries.forEach(([key, value]) => {
+        if (levelOrderMap.has(key)) {
+          fieldsInTree.push({ key, value, order: levelOrderMap.get(key) });
+        } else {
+          fieldsNotInTree.push({ key, value });
+        }
+      });
+
+      // Сортируем поля из дерева по order из дерева
+      fieldsInTree.sort((a, b) => a.order - b.order);
+
+      // Для полей не из дерева используем сохраненный порядок, если он есть
+      if (Array.isArray(customFieldsOrderState) && customFieldsOrderState.length > 0) {
+        const fieldsNotInTreeMap = new Map(fieldsNotInTree.map(f => [f.key, f]));
+        const orderedNotInTree = [];
+        const unorderedNotInTree = [];
+
+        // Сначала добавляем поля в сохраненном порядке
+        customFieldsOrderState.forEach(key => {
+          if (fieldsNotInTreeMap.has(key)) {
+            orderedNotInTree.push([key, fieldsNotInTreeMap.get(key).value]);
+          }
+        });
+
+        // Затем добавляем новые поля, которых нет в сохраненном порядке
+        fieldsNotInTree.forEach(field => {
+          if (!customFieldsOrderState.includes(field.key)) {
+            unorderedNotInTree.push([field.key, field.value]);
+          }
+        });
+
+        // Объединяем: сначала поля из дерева (в порядке уровней), затем остальные (в сохраненном порядке)
+        return [
+          ...fieldsInTree.map(item => [item.key, item.value]),
+          ...orderedNotInTree,
+          ...unorderedNotInTree
+        ];
+      }
+
+      // Если нет сохраненного порядка для полей не из дерева, просто добавляем их в конце
+      return [
+        ...fieldsInTree.map(item => [item.key, item.value]),
+        ...fieldsNotInTree.map(item => [item.key, item.value])
+      ];
+    }
+    
+    // Если нет дерева, используем сохраненный порядок, если он есть
     if (Array.isArray(customFieldsOrderState) && customFieldsOrderState.length > 0) {
-      const orderMap = new Map();
       const entriesMap = new Map(customFieldsEntries);
-      
-      // Создаем массив в сохраненном порядке
       const ordered = [];
       const unordered = [];
       
@@ -139,7 +199,6 @@ function PositionForm({
         }
       });
       
-      // Добавляем новые поля, которых нет в порядке
       customFieldsEntries.forEach(([key, value]) => {
         if (!customFieldsOrderState.includes(key)) {
           unordered.push([key, value]);
@@ -149,8 +208,8 @@ function PositionForm({
       return [...ordered, ...unordered];
     }
     
-    // Если нет сохраненного порядка, используем сортировку по уровням дерева
-    return sortCustomFieldsByTreeLevels(customFieldsEntries);
+    // Если нет ни дерева, ни сохраненного порядка, возвращаем как есть
+    return customFieldsEntries;
   };
 
   // Сортирует кастомные поля по уровням текущего дерева
@@ -755,6 +814,8 @@ function PositionForm({
           onChangeValue={handleCustomFieldChange}
           onRemoveField={handleRemoveCustomField}
           onAddField={handleAddCustomField}
+          treeStructure={treeStructure}
+          customFieldsOrder={customFieldsOrderState}
         />
       )}
     </form>

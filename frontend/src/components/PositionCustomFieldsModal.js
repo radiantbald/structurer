@@ -9,9 +9,82 @@ function PositionCustomFieldsModal({
   onChangeNewCustomFieldKey,
   onChangeValue,
   onRemoveField,
-  onAddField
+  onAddField,
+  treeStructure,
+  customFieldsOrder
 }) {
   const hasAnyFields = Object.keys(customFieldsValues || {}).length > 0;
+
+  // Сортирует кастомные поля с учетом уровней дерева
+  // Поля из дерева идут в порядке уровней, остальные - в конце
+  const sortCustomFieldsEntries = (entries) => {
+    if (!treeStructure || !treeStructure.levels || !Array.isArray(treeStructure.levels)) {
+      // Если нет дерева, возвращаем как есть
+      return entries;
+    }
+
+    // Создаем карту: custom_field_key -> order из дерева
+    const levelOrderMap = new Map();
+    treeStructure.levels
+      .sort((a, b) => (a.order || 0) - (b.order || 0))
+      .forEach((level, index) => {
+        if (level.custom_field_key) {
+          levelOrderMap.set(level.custom_field_key, level.order !== undefined ? level.order : index);
+        }
+      });
+
+    // Разделяем поля на две группы: из дерева и не из дерева
+    const fieldsInTree = [];
+    const fieldsNotInTree = [];
+
+    entries.forEach(([key, value]) => {
+      if (levelOrderMap.has(key)) {
+        fieldsInTree.push({ key, value, order: levelOrderMap.get(key) });
+      } else {
+        fieldsNotInTree.push({ key, value });
+      }
+    });
+
+    // Сортируем поля из дерева по order
+    fieldsInTree.sort((a, b) => a.order - b.order);
+
+    // Для полей не из дерева используем сохраненный порядок, если он есть
+    if (Array.isArray(customFieldsOrder) && customFieldsOrder.length > 0) {
+      const fieldsNotInTreeMap = new Map(fieldsNotInTree.map(f => [f.key, f]));
+      const orderedNotInTree = [];
+      const unorderedNotInTree = [];
+
+      // Сначала добавляем поля в сохраненном порядке
+      customFieldsOrder.forEach(key => {
+        if (fieldsNotInTreeMap.has(key)) {
+          orderedNotInTree.push([key, fieldsNotInTreeMap.get(key).value]);
+        }
+      });
+
+      // Затем добавляем новые поля, которых нет в сохраненном порядке
+      fieldsNotInTree.forEach(field => {
+        if (!customFieldsOrder.includes(field.key)) {
+          unorderedNotInTree.push([field.key, field.value]);
+        }
+      });
+
+      // Объединяем: сначала поля из дерева (в порядке уровней), затем остальные
+      return [
+        ...fieldsInTree.map(item => [item.key, item.value]),
+        ...orderedNotInTree,
+        ...unorderedNotInTree
+      ];
+    }
+
+    // Если нет сохраненного порядка для полей не из дерева, просто добавляем их в конце
+    return [
+      ...fieldsInTree.map(item => [item.key, item.value]),
+      ...fieldsNotInTree.map(item => [item.key, item.value])
+    ];
+  };
+
+  // Получаем отсортированные записи полей
+  const sortedFieldsEntries = sortCustomFieldsEntries(Object.entries(customFieldsValues || {}));
 
   const handleOverlayClick = (e) => {
     e.stopPropagation();
@@ -33,7 +106,7 @@ function PositionCustomFieldsModal({
 
           {hasAnyFields && (
             <div className="custom-fields-list">
-              {Object.entries(customFieldsValues).map(([key, value]) => {
+              {sortedFieldsEntries.map(([key, value]) => {
                 const fieldDef = availableCustomFields.find(f => f.key === key);
                 const isEnum = fieldDef?.allowed_values && fieldDef.allowed_values.length > 0;
 

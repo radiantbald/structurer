@@ -6,9 +6,59 @@ import { convertCustomFieldsObjectToArray } from '../utils/customFields';
 
 const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:8080/api';
 
-function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, initialName, deletedCustomField, treeStructure }) {
+// Вычисляет порядок кастомных полей на основе дерева
+// Поля из дерева идут в порядке уровней, остальные - в конце
+function calculateCustomFieldsOrder(customFieldsObj, treeStructure) {
+  if (!customFieldsObj || typeof customFieldsObj !== 'object') {
+    return [];
+  }
+
+  const fieldKeys = Object.keys(customFieldsObj);
+  if (fieldKeys.length === 0) {
+    return [];
+  }
+
+  // Если есть дерево, используем порядок из дерева
+  if (treeStructure && treeStructure.levels && Array.isArray(treeStructure.levels)) {
+    // Создаем карту: custom_field_key -> order из дерева
+    const levelOrderMap = new Map();
+    treeStructure.levels
+      .sort((a, b) => (a.order || 0) - (b.order || 0))
+      .forEach((level, index) => {
+        if (level.custom_field_key) {
+          levelOrderMap.set(level.custom_field_key, level.order !== undefined ? level.order : index);
+        }
+      });
+
+    // Разделяем поля на две группы: из дерева и не из дерева
+    const fieldsInTree = [];
+    const fieldsNotInTree = [];
+
+    fieldKeys.forEach(key => {
+      if (levelOrderMap.has(key)) {
+        fieldsInTree.push({ key, order: levelOrderMap.get(key) });
+      } else {
+        fieldsNotInTree.push(key);
+      }
+    });
+
+    // Сортируем поля из дерева по order
+    fieldsInTree.sort((a, b) => a.order - b.order);
+
+    // Объединяем: сначала поля из дерева, затем остальные
+    return [
+      ...fieldsInTree.map(item => item.key),
+      ...fieldsNotInTree
+    ];
+  }
+
+  // Если нет дерева, возвращаем порядок как есть
+  return fieldKeys;
+}
+
+function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, initialName, deletedCustomField, treeStructure, customFields: customFieldsProp }) {
   const [position, setPosition] = useState(null);
-  const [customFields, setCustomFields] = useState([]);
+  const [customFields, setCustomFields] = useState(customFieldsProp || []);
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -19,12 +69,13 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
     } else if (positionId === null) {
       if (initialPath) {
         // New position with path (from tree node)
-        // Сохраняем порядок полей из initialPath
-        const pathOrder = Object.keys(initialPath);
+        // ВАЖНО: Порядок полей вычисляем на основе дерева, а не из initialPath
+        // Это гарантирует стабильный порядок
+        const calculatedOrder = calculateCustomFieldsOrder(initialPath, treeStructure);
         setPosition({
           name: initialName || '',
           custom_fields: initialPath,
-          custom_fields_order: pathOrder,
+          custom_fields_order: calculatedOrder,
           employee_full_name: '',
           employee_external_id: '',
           employee_profile_url: ''
@@ -38,10 +89,17 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
     }
   }, [positionId, initialPath]);
 
+  // Обновляем customFields при изменении пропса
+  useEffect(() => {
+    if (customFieldsProp && customFieldsProp.length > 0) {
+      setCustomFields(customFieldsProp);
+    }
+  }, [customFieldsProp]);
+
   useEffect(() => {
     // Load custom fields definitions on mount (needed for new positions)
-    // Note: loadPosition will also call loadCustomFields, but we need it here for new positions
-    if (!positionId) {
+    // Только если не переданы через props
+    if (!positionId && (!customFieldsProp || customFieldsProp.length === 0)) {
       loadCustomFields();
     }
   }, []);
@@ -87,14 +145,21 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
     });
   }, [deletedCustomField]);
 
-  const loadPosition = async (id) => {
-    setLoading(true);
+  const loadPosition = async (id, silent = false) => {
+    if (!silent) {
+      setLoading(true);
+    }
     try {
       const response = await axios.get(`${API_BASE}/positions/${id}`);
       const positionData = response.data;
       
       // Load custom field definitions first (needed for conversion)
-      await loadCustomFields();
+      // Только если не переданы через props
+      if (!customFieldsProp || customFieldsProp.length === 0) {
+        await loadCustomFields();
+      } else {
+        setCustomFields(customFieldsProp);
+      }
       
       // Store original array format for display purposes
       const originalCustomFieldsArray = Array.isArray(positionData.custom_fields) 
@@ -179,13 +244,16 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
         positionData.custom_fields = customFieldsObj;
         // Store original array format for display
         positionData.custom_fields_array = originalCustomFieldsArray;
-        // Store order of custom fields keys
-        positionData.custom_fields_order = customFieldsOrder;
+        // ВАЖНО: Порядок полей всегда вычисляем на основе дерева, а не из данных сервера
+        // Это гарантирует стабильный порядок и предотвращает перепрыгивание полей
+        positionData.custom_fields_order = calculateCustomFieldsOrder(customFieldsObj, treeStructure);
       } else if (!positionData.custom_fields || typeof positionData.custom_fields !== 'object') {
         positionData.custom_fields = {};
         positionData.custom_fields_order = [];
       }
       
+      // При тихой перезагрузке всегда обновляем состояние, чтобы гарантировать правильный порядок
+      // Порядок всегда пересчитывается на основе дерева, что предотвращает перепрыгивание полей
       setPosition(positionData);
     } catch (error) {
       console.error('Failed to load position:', error);
@@ -220,8 +288,8 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
   const handleSave = async (positionData) => {
     try {
       // Преобразуем custom_fields из объекта в массив с правильной структурой
-      // Используем сохраненный порядок полей из данных формы, если он есть
-      const customFieldsOrder = positionData.custom_fields_order || position?.custom_fields_order || null;
+      // ВАЖНО: Порядок полей всегда вычисляем на основе дерева, чтобы гарантировать правильный порядок
+      const customFieldsOrder = calculateCustomFieldsOrder(positionData.custom_fields || {}, treeStructure);
       const customFieldsArray = convertCustomFieldsObjectToArray(
         positionData.custom_fields,
         customFields,
@@ -248,18 +316,46 @@ function PositionDetailsPanel({ positionId, onSaved, onDeleted, initialPath, ini
         const response = await axios.post(`${API_BASE}/positions`, dataToSend);
         savedPositionId = response.data.id;
       }
+      
+      // Оптимистично обновляем состояние сразу после сохранения, чтобы избежать мерцания
+      // Используем данные, которые мы только что отправили, преобразованные в формат для отображения
+      // ВАЖНО: Порядок полей всегда вычисляем на основе дерева, чтобы избежать перепрыгивания
+      const optimisticCustomFields = positionData.custom_fields || {};
+      const calculatedOrder = calculateCustomFieldsOrder(optimisticCustomFields, treeStructure);
+      
+      const optimisticPosition = {
+        ...(position || {}),
+        id: savedPositionId,
+        name: positionData.name,
+        employee_full_name: positionData.employee_full_name,
+        employee_external_id: positionData.employee_external_id,
+        employee_profile_url: positionData.employee_profile_url,
+        custom_fields: optimisticCustomFields,
+        custom_fields_array: customFieldsArray,
+        custom_fields_order: calculatedOrder
+      };
+      
       setIsEditing(false);
+      setPosition(optimisticPosition);
+      
       if (onSaved) {
         onSaved(savedPositionId);
       }
+      
+      // Тихая перезагрузка в фоне для синхронизации с сервером
+      // Не устанавливаем loading, чтобы избежать мерцания
       if (savedPositionId) {
-        loadPosition(savedPositionId);
+        loadPosition(savedPositionId, true); // true = silent reload
       } else {
         setPosition(null);
       }
     } catch (error) {
       console.error('Failed to save position:', error);
       alert('Ошибка при сохранении: ' + (error.response?.data?.error || error.message));
+      // В случае ошибки перезагружаем данные с сервера
+      if (position && position.id) {
+        loadPosition(position.id);
+      }
     }
   };
 

@@ -11,7 +11,10 @@ import (
 
 func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 	// Local handler to reuse helper logic that builds custom_fields with linked_custom_fields
-	h := &Handler{db: db}
+	h := &Handler{
+		db:                  db,
+		customFieldsService: NewCustomFieldsService(db),
+	}
 
 	structure := TreeStructure{
 		TreeID: tree.ID.String(),
@@ -52,51 +55,9 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 		return structure
 	}
 
-	// Pre-load field-to-values mapping (which values belong to which fields)
-	fieldToValuesMap := make(map[uuid.UUID]map[uuid.UUID]bool)
-	fieldInfoMap := make(map[uuid.UUID]struct {
-		Key   string
-		Label string
-	})
-	fieldsRows, _ := db.Query(`SELECT id, key, label, allowed_values_ids FROM custom_fields WHERE allowed_values_ids IS NOT NULL`)
-	if fieldsRows != nil {
-		for fieldsRows.Next() {
-			var fieldID uuid.UUID
-			var key, label string
-			var allowedValueIDsJSON []byte
-			if err := fieldsRows.Scan(&fieldID, &key, &label, &allowedValueIDsJSON); err == nil {
-				fieldInfoMap[fieldID] = struct {
-					Key   string
-					Label string
-				}{Key: key, Label: label}
-				var ids []string
-				if err := json.Unmarshal(allowedValueIDsJSON, &ids); err == nil {
-					valueSet := make(map[uuid.UUID]bool)
-					for _, idStr := range ids {
-						if id, err := uuid.Parse(idStr); err == nil {
-							valueSet[id] = true
-						}
-					}
-					fieldToValuesMap[fieldID] = valueSet
-				}
-			}
-		}
-		fieldsRows.Close()
-	}
-
-	// Pre-load all custom field values
-	valueInfoMap := make(map[uuid.UUID]string)
-	valuesRows, _ := db.Query(`SELECT id, value FROM custom_fields_values`)
-	if valuesRows != nil {
-		for valuesRows.Next() {
-			var valueID uuid.UUID
-			var value string
-			if err := valuesRows.Scan(&valueID, &value); err == nil {
-				valueInfoMap[valueID] = value
-			}
-		}
-		valuesRows.Close()
-	}
+	// Pre-load field-to-values mapping using service
+	customFieldsService := NewCustomFieldsService(db)
+	_, _, fieldToValuesMap, _ := customFieldsService.LoadAllCustomFieldsData()
 
 	// Build value-to-field mapping
 	valueToFieldMap := make(map[uuid.UUID]uuid.UUID)
@@ -288,63 +249,11 @@ func buildTreeStructure(db *sql.DB, tree TreeDefinition) TreeStructure {
 func loadCustomFieldDefinitions(db *sql.DB) map[string]CustomFieldDefinition {
 	fieldDefsByKey := make(map[string]CustomFieldDefinition)
 
-	// Pre-load all custom field definitions for linked fields lookup
-	allFieldsRows, err := db.Query(`SELECT id, key, label FROM custom_fields`)
+	// Pre-load all custom fields data using service
+	customFieldsService := NewCustomFieldsService(db)
+	fieldInfoMap, valueInfoMap, fieldToValuesMap, err := customFieldsService.LoadAllCustomFieldsData()
 	if err != nil {
 		return fieldDefsByKey
-	}
-	fieldInfoMap := make(map[uuid.UUID]struct {
-		Key   string
-		Label string
-	})
-	for allFieldsRows.Next() {
-		var fieldID uuid.UUID
-		var key, label string
-		if err := allFieldsRows.Scan(&fieldID, &key, &label); err == nil {
-			fieldInfoMap[fieldID] = struct {
-				Key   string
-				Label string
-			}{Key: key, Label: label}
-		}
-	}
-	allFieldsRows.Close()
-
-	// Pre-load all custom field values for linked values lookup
-	allValuesRows, err := db.Query(`SELECT id, value FROM custom_fields_values`)
-	if err != nil {
-		return fieldDefsByKey
-	}
-	valueInfoMap := make(map[uuid.UUID]string)
-	for allValuesRows.Next() {
-		var valueID uuid.UUID
-		var value string
-		if err := allValuesRows.Scan(&valueID, &value); err == nil {
-			valueInfoMap[valueID] = value
-		}
-	}
-	allValuesRows.Close()
-
-	// Pre-load field-to-values mapping (which values belong to which fields)
-	fieldToValuesMap := make(map[uuid.UUID]map[uuid.UUID]bool)
-	fieldsForMappingRows, err := db.Query(`SELECT id, allowed_values_ids FROM custom_fields WHERE allowed_values_ids IS NOT NULL`)
-	if err == nil {
-		for fieldsForMappingRows.Next() {
-			var fieldID uuid.UUID
-			var allowedValueIDsJSON []byte
-			if err := fieldsForMappingRows.Scan(&fieldID, &allowedValueIDsJSON); err == nil {
-				var ids []string
-				if err := json.Unmarshal(allowedValueIDsJSON, &ids); err == nil {
-					valueSet := make(map[uuid.UUID]bool)
-					for _, idStr := range ids {
-						if id, err := uuid.Parse(idStr); err == nil {
-							valueSet[id] = true
-						}
-					}
-					fieldToValuesMap[fieldID] = valueSet
-				}
-			}
-		}
-		fieldsForMappingRows.Close()
 	}
 
 	// Load custom field definitions with allowed values and linked fields
@@ -380,70 +289,15 @@ func loadCustomFieldDefinitions(db *sql.DB) map[string]CustomFieldDefinition {
 								valueID,
 							).Scan(&cv.ID, &cv.Value, &linkedCustomFieldIDsJSON, &linkedCustomFieldValueIDsJSON, &cv.CreatedAt, &cv.UpdatedAt)
 							if err == nil {
-								// Build linked_custom_fields structure
-								linkedCustomFields := []LinkedCustomField{}
-
-								if linkedCustomFieldIDsJSON != nil && linkedCustomFieldValueIDsJSON != nil {
-									var linkedFieldIDs []string
-									var linkedValueIDs []string
-
-									if err := json.Unmarshal(linkedCustomFieldIDsJSON, &linkedFieldIDs); err == nil {
-										if err := json.Unmarshal(linkedCustomFieldValueIDsJSON, &linkedValueIDs); err == nil {
-											// Parse all linked field IDs
-											linkedFieldUUIDs := make([]uuid.UUID, 0, len(linkedFieldIDs))
-											for _, idStr := range linkedFieldIDs {
-												if id, err := uuid.Parse(idStr); err == nil {
-													linkedFieldUUIDs = append(linkedFieldUUIDs, id)
-												}
-											}
-
-											// Parse all linked value IDs
-											linkedValueUUIDs := make([]uuid.UUID, 0, len(linkedValueIDs))
-											for _, idStr := range linkedValueIDs {
-												if id, err := uuid.Parse(idStr); err == nil {
-													linkedValueUUIDs = append(linkedValueUUIDs, id)
-												}
-											}
-
-											// For each linked field, find which values belong to it
-											for _, linkedFieldID := range linkedFieldUUIDs {
-												fieldInfo, fieldExists := fieldInfoMap[linkedFieldID]
-												if !fieldExists {
-													continue
-												}
-
-												// Find values that belong to this field
-												fieldValueSet, hasValues := fieldToValuesMap[linkedFieldID]
-												if !hasValues {
-													continue
-												}
-
-												var linkedFieldValues []LinkedCustomFieldValue
-												for _, valueID := range linkedValueUUIDs {
-													// Check if this value belongs to the linked field
-													if fieldValueSet[valueID] {
-														// Get the value text from pre-loaded map
-														if valueText, exists := valueInfoMap[valueID]; exists {
-															linkedFieldValues = append(linkedFieldValues, LinkedCustomFieldValue{
-																LinkedCustomFieldValueID: valueID,
-																LinkedCustomFieldValue:   valueText,
-															})
-														}
-													}
-												}
-
-												if len(linkedFieldValues) > 0 {
-													linkedCustomFields = append(linkedCustomFields, LinkedCustomField{
-														LinkedCustomFieldID:     linkedFieldID,
-														LinkedCustomFieldKey:    fieldInfo.Key,
-														LinkedCustomFieldLabel:  fieldInfo.Label,
-														LinkedCustomFieldValues: linkedFieldValues,
-													})
-												}
-											}
-										}
-									}
-								}
+								// Build linked_custom_fields structure using service
+								linkedCustomFields, _ := customFieldsService.BuildLinkedCustomFields(
+									linkedCustomFieldIDsJSON,
+									linkedCustomFieldValueIDsJSON,
+									fieldInfoMap,
+									fieldToValuesMap,
+									valueInfoMap,
+									nil, // No filtering by selected values in this context
+								)
 
 								allowedValues = append(allowedValues, AllowedValue{
 									ValueID:            cv.ID,

@@ -2,8 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import TreeView from './TreeView';
 import TreeSelector from './TreeSelector';
+import SearchBar from './SearchBar';
+import TreeControls from './TreeControls';
 import { buildTreeStructureLocally } from '../utils/treeBuilder';
 import { convertCustomFieldsObjectToArray } from '../utils/customFields';
+import { matchesSearch, applySearchFilter } from '../utils/searchUtils';
 import './TreePanel.css';
 
 const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:8080/api';
@@ -21,6 +24,8 @@ function TreePanel({
   selectedPositionId,
   onTreeStructureChange,
   deletedCustomField,
+  onTreesLoaded,
+  onCustomFieldsLoaded,
 }) {
   const [trees, setTrees] = useState([]);
   const [selectedTreeId, setSelectedTreeId] = useState(() => {
@@ -38,6 +43,8 @@ function TreePanel({
   const [customFields, setCustomFields] = useState([]);
   const positionsRef = useRef([]);
   const allPositionsRef = useRef([]);
+  const loadingTreeStructureRef = useRef(false);
+  const pendingTreeStructureLoadRef = useRef(null);
 
   // Первоначальная загрузка при монтировании компонента
   useEffect(() => {
@@ -63,6 +70,11 @@ function TreePanel({
   useEffect(() => {
     // Не обновляем структуру, пока не загружены деревья
     if (loading) {
+      return;
+    }
+    
+    // Не вызываем, если уже идет загрузка структуры
+    if (loadingTreeStructureRef.current) {
       return;
     }
     
@@ -103,6 +115,11 @@ function TreePanel({
       return;
     }
     
+    // Не вызываем, если уже идет загрузка структуры
+    if (loadingTreeStructureRef.current) {
+      return;
+    }
+    
     // Если есть поисковый запрос, используем исходную структуру дерева (не перестраиваем)
     if (searchQuery && searchQuery.trim()) {
       if (selectedTreeId && selectedTreeId !== '') {
@@ -128,7 +145,14 @@ function TreePanel({
   // Применяем фильтр при изменении поискового запроса и перестраиваем дерево
   useEffect(() => {
     if (allPositionsRef.current.length > 0) {
-      applySearchFilter(allPositionsRef.current, searchQuery);
+      const filtered = applySearchFilter(allPositionsRef.current, searchQuery, customFields);
+      positionsRef.current = filtered;
+      setPositions(filtered);
+      
+      // Не вызываем loadTreeStructure, если уже идет загрузка
+      if (loadingTreeStructureRef.current) {
+        return;
+      }
       
       // Если есть поисковый запрос, используем исходную структуру дерева (не перестраиваем)
       if (searchQuery && searchQuery.trim()) {
@@ -158,6 +182,10 @@ function TreePanel({
       const response = await axios.get(`${API_BASE}/trees`);
       const treesData = response.data || [];
       setTrees(treesData);
+      // Передаем данные в родительский компонент
+      if (onTreesLoaded) {
+        onTreesLoaded(treesData);
+      }
 
       // Если уже есть сохраненное дерево и оно существует в списке, используем его
       if (selectedTreeId && treesData.some(t => String(t.id) === String(selectedTreeId))) {
@@ -201,7 +229,9 @@ function TreePanel({
       const positionsData = response.data?.items || [];
       allPositionsRef.current = positionsData;
       // Применяем фильтр поиска
-      applySearchFilter(positionsData, searchQuery);
+      const filtered = applySearchFilter(positionsData, searchQuery, customFields);
+      positionsRef.current = filtered;
+      setPositions(filtered);
     } catch (error) {
       console.error('Failed to load positions:', error);
       alert('Ошибка при загрузке должностей: ' + (error.response?.data?.error || error.message));
@@ -211,7 +241,12 @@ function TreePanel({
   const loadCustomFields = async () => {
     try {
       const response = await axios.get(`${API_BASE}/custom-fields`);
-      setCustomFields(response.data || []);
+      const fieldsData = response.data || [];
+      setCustomFields(fieldsData);
+      // Передаем данные в родительский компонент
+      if (onCustomFieldsLoaded) {
+        onCustomFieldsLoaded(fieldsData);
+      }
     } catch (error) {
       console.error('Failed to load custom fields in TreePanel:', error);
     }
@@ -255,205 +290,14 @@ function TreePanel({
     }
   }, [deletedCustomField]);
 
-  // Функция для проверки, соответствует ли позиция поисковому запросу
-  const matchesSearch = (position, query) => {
-    if (!query || !query.trim()) {
-      return true;
-    }
-
-    const searchText = query.trim();
-    const searchLower = searchText.toLowerCase();
-
-    // Проверяем наличие AND/OR операторов (регистронезависимо)
-    const hasAnd = / and /i.test(searchText);
-    const hasOr = / or /i.test(searchText);
-
-    if (hasAnd || hasOr) {
-      // Разбиваем по AND (приоритет выше, регистронезависимо)
-      let parts = [];
-      if (hasAnd) {
-        parts = searchText.split(/ and /i).map(p => p.trim());
-      } else {
-        parts = [searchText];
-      }
-
-      // Проверяем каждую часть (которая может содержать OR)
-      for (const part of parts) {
-        if (/ or /i.test(part)) {
-          // OR логика: хотя бы одно условие должно совпадать
-          const orParts = part.split(/ or /i).map(p => p.trim());
-          let orMatch = false;
-          for (const orPart of orParts) {
-            if (orPart && matchesSingleTerm(position, orPart)) {
-              orMatch = true;
-              break;
-            }
-          }
-          if (!orMatch) {
-            return false; // Если ни одно OR условие не совпало, вся AND группа не совпадает
-          }
-        } else {
-          // AND логика: условие должно совпадать
-          if (part && !matchesSingleTerm(position, part)) {
-            return false;
-          }
-        }
-      }
-      return true;
-    } else {
-      // Простой поиск без операторов
-      return matchesSingleTerm(position, searchText);
-    }
-  };
-
-  // Функция для проверки соответствия одному поисковому термину
-  const matchesSingleTerm = (position, term) => {
-    if (!term) return true;
-
-    const termLower = term.toLowerCase();
-
-    // Поиск по имени
-    if (position.name && position.name.toLowerCase().includes(termLower)) {
-      return true;
-    }
-
-    // Поиск по описанию
-    if (position.description && position.description.toLowerCase().includes(termLower)) {
-      return true;
-    }
-
-    // Поиск по имени сотрудника
-    if (position.employee_full_name && position.employee_full_name.toLowerCase().includes(termLower)) {
-      return true;
-    }
-
-    // Поиск по кастомным полям (учитываем разные форматы хранения и значения)
-    const customFieldTexts = [];
-
-    // 1) Старый / альтернативный формат: position.custom_fields как объект или массив
-    if (position.custom_fields) {
-      if (Array.isArray(position.custom_fields)) {
-        // Возможный новый формат: массив объектов с custom_field_label/custom_field_value
-        position.custom_fields.forEach((cf) => {
-          if (!cf) return;
-
-          if (cf.custom_field_label) {
-            customFieldTexts.push(String(cf.custom_field_label));
-          }
-          if (cf.custom_field_value) {
-            customFieldTexts.push(String(cf.custom_field_value));
-          }
-
-          if (Array.isArray(cf.linked_custom_fields)) {
-            cf.linked_custom_fields.forEach((lf) => {
-              if (!lf) return;
-              if (lf.linked_custom_field_label) {
-                customFieldTexts.push(String(lf.linked_custom_field_label));
-              }
-              if (Array.isArray(lf.linked_custom_field_values)) {
-                lf.linked_custom_field_values.forEach((lv) => {
-                  if (!lv) return;
-                  if (lv.linked_custom_field_value) {
-                    customFieldTexts.push(String(lv.linked_custom_field_value));
-                  }
-                });
-              }
-            });
-          }
-
-          // Fallback: если это примитив или что‑то ещё, просто сериализуем
-          if (
-            !cf.custom_field_label &&
-            !cf.custom_field_value &&
-            typeof cf === 'string'
-          ) {
-            customFieldTexts.push(cf);
-          }
-        });
-      } else if (typeof position.custom_fields === 'object') {
-        // Формат: объект { key: value }
-        Object.values(position.custom_fields).forEach((v) => {
-          if (v !== undefined && v !== null) {
-            customFieldTexts.push(String(v));
-          }
-        });
-      } else if (typeof position.custom_fields === 'string') {
-        customFieldTexts.push(position.custom_fields);
-      }
-    }
-
-    // 2) Новый формат: есть только ID значений в custom_fields_values_ids,
-    // а сами значения берём из справочника кастомных полей (customFields из состояния)
-    if (
-      Array.isArray(position.custom_fields_values_ids) &&
-      position.custom_fields_values_ids.length > 0 &&
-      Array.isArray(customFields) &&
-      customFields.length > 0
-    ) {
-      const valueIdSet = new Set(
-        position.custom_fields_values_ids.map((v) => String(v)),
-      );
-
-      customFields.forEach((fieldDef) => {
-        if (!fieldDef || !Array.isArray(fieldDef.allowed_values)) return;
-
-        fieldDef.allowed_values.forEach((av) => {
-          if (!av) return;
-          const valueId = av.value_id ? String(av.value_id) : null;
-          if (!valueId || !valueIdSet.has(valueId)) return;
-
-          if (av.value) {
-            customFieldTexts.push(String(av.value));
-          }
-
-          if (Array.isArray(av.linked_custom_fields)) {
-            av.linked_custom_fields.forEach((lf) => {
-              if (!lf) return;
-              if (lf.linked_custom_field_label) {
-                customFieldTexts.push(String(lf.linked_custom_field_label));
-              }
-              if (Array.isArray(lf.linked_custom_field_values)) {
-                lf.linked_custom_field_values.forEach((lv) => {
-                  if (!lv) return;
-                  if (lv.linked_custom_field_value) {
-                    customFieldTexts.push(String(lv.linked_custom_field_value));
-                  }
-                });
-              }
-            });
-          }
-        });
-      });
-    }
-
-    if (customFieldTexts.length > 0) {
-      const customFieldsStr = customFieldTexts.join(' ').toLowerCase();
-      if (customFieldsStr.includes(termLower)) {
-        return true;
-      }
-    }
-
-    return false;
-  };
-
-  // Применяем фильтр поиска к позициям
-  const applySearchFilter = (allPositions, query) => {
-    if (!query || !query.trim()) {
-      setPositions(allPositions);
-      positionsRef.current = allPositions;
-      return;
-    }
-
-    const filtered = allPositions.filter(pos => matchesSearch(pos, query));
-    setPositions(filtered);
-    positionsRef.current = filtered;
-  };
 
   // Обработчик изменения поискового запроса
   const handleSearchChange = (e) => {
     const query = e.target.value;
     setSearchQuery(query);
-    applySearchFilter(allPositionsRef.current, query);
+    const filtered = applySearchFilter(allPositionsRef.current, query, customFields);
+    positionsRef.current = filtered;
+    setPositions(filtered);
   };
 
   // Функция для проверки, соответствует ли узел дерева поисковому запросу
@@ -471,7 +315,7 @@ function TreePanel({
       
       if (fullPosition) {
         // Используем полные данные позиции
-        return matchesSearch(fullPosition, query);
+        return matchesSearch(fullPosition, query, customFields);
       } else {
         // Если полных данных нет, проверяем только то, что есть в узле
         const positionData = {
@@ -480,7 +324,7 @@ function TreePanel({
           employee_full_name: node.employee_full_name || '',
           custom_fields: {}
         };
-        return matchesSearch(positionData, query);
+        return matchesSearch(positionData, query, customFields);
       }
     }
 
@@ -572,10 +416,18 @@ function TreePanel({
       if (onTreeStructureChange) {
         onTreeStructureChange(null);
       }
+      loadingTreeStructureRef.current = false;
+      return;
+    }
+
+    // Если уже идет загрузка, сохраняем последний запрошенный treeId
+    if (loadingTreeStructureRef.current) {
+      pendingTreeStructureLoadRef.current = treeId;
       return;
     }
 
     try {
+      loadingTreeStructureRef.current = true;
       setLoadingTree(true);
       setTreeStructure(null);
       if (onTreeStructureChange) {
@@ -591,12 +443,24 @@ function TreePanel({
       if (onTreeStructureChange) {
         onTreeStructureChange(structure);
       }
+
+      // Проверяем, есть ли отложенный запрос
+      const pendingTreeId = pendingTreeStructureLoadRef.current;
+      if (pendingTreeId && pendingTreeId !== treeId) {
+        pendingTreeStructureLoadRef.current = null;
+        // Рекурсивно вызываем для отложенного запроса
+        setTimeout(() => loadTreeStructure(pendingTreeId), 0);
+        return;
+      }
+      pendingTreeStructureLoadRef.current = null;
     } catch (error) {
       console.error('Failed to load tree structure from server:', error);
       // Fallback: используем локальное построение при ошибке
       rebuildTreeStructureLocally(treeId);
+      pendingTreeStructureLoadRef.current = null;
     } finally {
       setLoadingTree(false);
+      loadingTreeStructureRef.current = false;
     }
   };
 
@@ -978,32 +842,17 @@ function TreePanel({
   return (
     <div className="tree-panel">
       <div className="tree-panel-header">
-        <div className="tree-panel-actions">
-          <button
-            className="btn btn-secondary btn-small"
-            onClick={onShowCustomFields}
-            type="button"
-          >
-            Кастомные поля
-          </button>
-          <button
-            className="btn btn-secondary btn-small"
-            onClick={onShowTreeDefinition}
-            type="button"
-          >
-            Деревья
-          </button>
-        </div>
+        <TreeControls
+          onShowCustomFields={onShowCustomFields}
+          onShowTreeDefinition={onShowTreeDefinition}
+        />
         <div className="tree-panel-selector-row">
           <TreeSelector
             trees={trees}
             selectedTreeId={selectedTreeId}
             onChange={handleTreeChange}
           />
-          <input
-            type="text"
-            className="tree-panel-search"
-            placeholder="Поиск (AND/OR)"
+          <SearchBar
             value={searchQuery}
             onChange={handleSearchChange}
           />

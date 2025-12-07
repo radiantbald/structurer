@@ -14,3 +14,4 @@ ALTER INDEX IF EXISTS custom_field_definitions_key_key RENAME TO custom_fields_k
 COMMIT;
 
 
+
